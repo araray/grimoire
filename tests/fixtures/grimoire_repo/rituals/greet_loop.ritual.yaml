@@ -1,0 +1,11 @@
+id: rituals/greet_loop
+name: Greeting Loop
+version: 1.0.0
+steps:
+  - id: step_1
+    spell: examples/greet
+    conjure:
+      vars:
+        inherit: true
+    output:
+      capture: greeting

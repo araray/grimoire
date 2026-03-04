@@ -1,0 +1,52 @@
+---
+id: devtools/git
+name: Git (read-only diagnostics)
+version: 1.0.0
+description: Common git commands used for diagnostics and patch review.
+tags: [devtools, vcs, engineering]
+platforms: [any]
+risk_level: low
+permissions: [read_fs]
+commands:
+  - name: status
+    summary: Show working tree status
+    params:
+      - name: porcelain
+        type: bool
+        required: false
+        default: true
+        description: Use machine-readable format
+    returns:
+      type: object
+      properties:
+        stdout: { type: string }
+        stderr: { type: string }
+        exit_code: { type: integer, minimum: 0, maximum: 255 }
+    side_effects: []
+    examples:
+      - call: { porcelain: true }
+        expect: "stdout contains file paths and states"
+  - name: diff
+    summary: Show changes between commits, working tree, and index
+    params:
+      - name: pathspec
+        type: string
+        required: false
+      - name: staged
+        type: bool
+        required: false
+        default: false
+    side_effects: []
+  - name: log
+    summary: Show commit log
+    params:
+      - name: count
+        type: integer
+        required: false
+        default: 10
+        description: Number of commits to show
+      - name: oneline
+        type: bool
+        required: false
+        default: true
+    side_effects: []

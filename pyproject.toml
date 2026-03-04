@@ -1,0 +1,126 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "grimoire"
+version = "0.1.0"
+description = "Prompt & tool control plane for the llmcore ecosystem — spells, rituals, runes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "Araray Velho", email = "araray@gmail.com" }
+]
+keywords = [
+    "llm", "prompts", "templates", "skills", "tools",
+    "prompt-engineering", "prompt-library", "agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0",
+    "click>=8.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+]
+dev = [
+    "grimoire[test]",
+    "ruff",
+    "mypy>=1.0.0",
+    "build",
+]
+
+[project.urls]
+Homepage = "https://github.com/araray/grimoire"
+Repository = "https://github.com/araray/grimoire"
+Issues = "https://github.com/araray/grimoire/issues"
+
+[project.scripts]
+grimoire = "grimoire.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+grimoire = [
+    "py.typed",
+    "schema/*.json",
+]
+
+# --- Ruff Linter Configuration ---
+[tool.ruff]
+exclude = [
+    ".bzr", ".direnv", ".eggs", ".git", ".hg", ".mypy_cache", ".nox",
+    ".pants.d", ".pytype", ".ruff_cache", ".svn", ".tox", ".venv",
+    "__pypackages__", "_build", "buck-out", "build", "dist",
+    "node_modules", "venv", "*.egg-info",
+]
+line-length = 100
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "C", "B", "A", "RUF", "ASYNC", "PYI",
+]
+ignore = [
+    "E501",
+    "B008",
+    "C901",
+    "E731",
+    "A003",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+# --- Pytest Configuration ---
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q"
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks integration tests",
+]
+
+# --- Coverage Configuration ---
+[tool.coverage.run]
+source = ["src/grimoire"]
+branch = true
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+]

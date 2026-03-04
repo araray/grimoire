@@ -1,0 +1,23 @@
+---
+id: devtools/git
+name: Git (read-only diagnostics)
+version: 1.0.0
+description: Git commands for diagnostics.
+tags: [devtools, vcs, engineering]
+risk_level: low
+permissions: [read_fs]
+commands:
+  - name: status
+    summary: Show working tree status
+    params:
+      - name: porcelain
+        type: bool
+        default: true
+    side_effects: []
+  - name: diff
+    summary: Show diff
+    params:
+      - name: staged
+        type: bool
+        default: false
+    side_effects: []

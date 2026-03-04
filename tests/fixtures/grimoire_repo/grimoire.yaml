@@ -1,0 +1,9 @@
+name: test-grimoire
+version: 0.1.0
+description: Test grimoire for unit testing
+authors: [test]
+spell_paths: [spells/]
+rune_paths: [runes/contracts/]
+ritual_paths: [rituals/]
+promptlet_paths: [spells/promptlets/]
+vars_path: vars/defaults.yaml
