@@ -7,7 +7,13 @@ import json
 
 import click
 
-from grimoire.cli.helpers import load_repo, load_vars_from_files, write_output
+from grimoire.cli.helpers import (
+    load_profiles,
+    load_repo,
+    load_vars_from_files,
+    prompt_for_variable,
+    write_output,
+)
 from grimoire.conjure.engine import ConjureEngine
 from grimoire.exceptions import ConjureError
 
@@ -16,7 +22,10 @@ from grimoire.exceptions import ConjureError
 @click.argument("spell_id")
 @click.option("--ask-missing", is_flag=True, help="Interactively prompt for missing variables.")
 @click.option("--no-ask-missing", is_flag=True, help="Fail on missing variables (non-interactive).")
-@click.option("--strict/--no-strict", default=True, help="Strict variable checking (default: strict).")
+@click.option("--ask-all", is_flag=True, help="Confirm all variables interactively.")
+@click.option(
+    "--strict/--no-strict", default=True, help="Strict variable checking (default: strict)."
+)
 @click.option("--provenance", is_flag=True, help="Include provenance report in output.")
 @click.pass_context
 def conjure_cmd(
@@ -24,11 +33,20 @@ def conjure_cmd(
     spell_id: str,
     ask_missing: bool,
     no_ask_missing: bool,
+    ask_all: bool,
     strict: bool,
     provenance: bool,
 ) -> None:
     """
     Conjure (render) a spell into provider messages.
+
+    Variable resolution follows precedence (highest wins):
+      1. --set key=value
+      2. --vars file.yaml
+      3. --profile overlays
+      4. grimoire defaults (vars/defaults.yaml)
+      5. spell defaults
+      6. built-ins (grimoire.now.*, etc.)
 
     Examples:
 
@@ -37,6 +55,8 @@ def conjure_cmd(
         grimoire conjure examples/hello --set name=Alice --format openai
 
         grimoire conjure engineering/rca --ask-missing --format json
+
+        grimoire conjure examples/hello --profile user/aaiv --ask-all
     """
     repo = load_repo(ctx)
     output_format: str = ctx.obj["output_format"]
@@ -49,22 +69,34 @@ def conjure_cmd(
         ctx.exit(1)
         return
 
-    # Build variable map
+    # Build variable map with precedence: profiles < file vars < explicit vars
+    profile_vars = load_profiles(repo, ctx.obj["profiles"])
     vars_from_files = load_vars_from_files(ctx.obj["vars_files"])
     explicit_vars: dict[str, str] = ctx.obj["explicit_vars"]
 
-    # Merge: file vars < explicit vars
     all_vars: dict[str, object] = {}
+    all_vars.update(profile_vars)
     all_vars.update(vars_from_files)
     all_vars.update(explicit_vars)
 
-    # Interactive fill for missing required variables
-    if ask_missing and not no_ask_missing:
+    # Interactive fill: --ask-all confirms all variables; --ask-missing fills only missing
+    if ask_all:
+        for name, spec in spell.variables.items():
+            current = all_vars.get(name, spec.default)
+            if current is not None:
+                confirm_text = spec.ask or f"Value for '{name}'"
+                confirmed = click.prompt(
+                    f"{confirm_text} [{current}]",
+                    default=str(current),
+                    show_default=False,
+                )
+                all_vars[name] = confirmed
+            else:
+                all_vars[name] = prompt_for_variable(name, spec)
+    elif ask_missing and not no_ask_missing:
         for name, spec in spell.required_variables().items():
             if name not in all_vars:
-                prompt_text = spec.ask or f"Enter value for '{name}' ({spec.type.value})"
-                value = click.prompt(prompt_text)
-                all_vars[name] = value
+                all_vars[name] = prompt_for_variable(name, spec)
 
     # Create conjure engine
     engine = ConjureEngine(

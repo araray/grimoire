@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class MessageRole(str, Enum):
     """Recognized message block roles in a spell."""
+
     SYSTEM = "SYSTEM"
     DEVELOPER = "DEVELOPER"
     USER = "USER"
@@ -40,6 +41,7 @@ class MessageRole(str, Enum):
 
 class VariableType(str, Enum):
     """Variable types supported in spell schemas."""
+
     STRING = "string"
     MULTILINE = "multiline"
     INTEGER = "integer"
@@ -51,6 +53,7 @@ class VariableType(str, Enum):
 
 class RiskLevel(str, Enum):
     """Risk level for rune commands."""
+
     NONE = "none"
     LOW = "low"
     MEDIUM = "medium"
@@ -59,6 +62,7 @@ class RiskLevel(str, Enum):
 
 class Permission(str, Enum):
     """Semantic permissions for runes."""
+
     READ_FS = "read_fs"
     WRITE_FS = "write_fs"
     NETWORK = "network"
@@ -67,6 +71,7 @@ class Permission(str, Enum):
 
 class RuneExportMode(str, Enum):
     """How runes are exposed when conjuring a spell."""
+
     NONE = "none"
     REFERENCE = "reference"
     INLINE = "inline"
@@ -75,6 +80,7 @@ class RuneExportMode(str, Enum):
 
 class OutputContractType(str, Enum):
     """Supported output contract formats."""
+
     MARKDOWN = "markdown"
     JSON = "json"
     TEXT = "text"
@@ -91,6 +97,7 @@ class VariableSpec(BaseModel):
 
     Defines type, constraints, defaults, and interactive prompt text.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     type: VariableType = VariableType.STRING
@@ -118,6 +125,7 @@ class VariableSpec(BaseModel):
 
 class MessageBlock(BaseModel):
     """A rendered or raw message block within a spell."""
+
     model_config = ConfigDict(frozen=True)
 
     role: MessageRole
@@ -131,12 +139,14 @@ class MessageBlock(BaseModel):
 
 class RubricInclude(BaseModel):
     """Reference to a rubric promptlet."""
+
     model_config = ConfigDict(extra="forbid")
     include: str
 
 
 class OutputContract(BaseModel):
     """Output contract specifying expected format and rubrics."""
+
     model_config = ConfigDict(extra="forbid")
 
     type: OutputContractType = OutputContractType.MARKDOWN
@@ -151,6 +161,7 @@ class OutputContract(BaseModel):
 
 class RuneExportConfig(BaseModel):
     """Configuration for how runes are exported alongside a spell."""
+
     model_config = ConfigDict(extra="forbid")
 
     mode: RuneExportMode = RuneExportMode.NONE
@@ -174,6 +185,7 @@ class Spell(BaseModel):
     The `raw_blocks` field holds the unparsed template text per role,
     while `source_path` records where the spell was loaded from.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     # Metadata
@@ -233,6 +245,7 @@ class Promptlet(BaseModel):
 
     Promptlets are simple: an id and content string, loadable from files.
     """
+
     model_config = ConfigDict(frozen=True)
 
     id: str
@@ -247,6 +260,7 @@ class Promptlet(BaseModel):
 
 class ParamSpec(BaseModel):
     """Parameter specification for a rune command."""
+
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -263,6 +277,7 @@ class ParamSpec(BaseModel):
 
 class ReturnSpec(BaseModel):
     """Return type specification for a rune command."""
+
     model_config = ConfigDict(extra="allow")
 
     type: str = "object"
@@ -271,6 +286,7 @@ class ReturnSpec(BaseModel):
 
 class CommandExample(BaseModel):
     """Example invocation for a rune command."""
+
     model_config = ConfigDict(extra="forbid")
 
     call: dict[str, Any] = Field(default_factory=dict)
@@ -284,6 +300,7 @@ class CommandSpec(BaseModel):
     Describes name, parameters, return schema, side effects,
     risk level, and examples.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     name: str
@@ -303,6 +320,7 @@ class RuneSpec(BaseModel):
     Contains metadata, platform constraints, permissions,
     and a list of command specifications.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     # Metadata
@@ -352,6 +370,7 @@ class RuneSpec(BaseModel):
 
 class RitualStep(BaseModel):
     """A single step in a ritual flow."""
+
     model_config = ConfigDict(extra="allow")
 
     id: str
@@ -367,6 +386,7 @@ class Ritual(BaseModel):
 
     Phase 0 includes the data model only; evaluation is Phase 3.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
@@ -383,6 +403,7 @@ class Ritual(BaseModel):
 
 class Provenance(BaseModel):
     """Provenance record for a conjured prompt."""
+
     model_config = ConfigDict(frozen=True)
 
     spell_id: str
@@ -399,6 +420,7 @@ class ConjuredPrompt(BaseModel):
 
     Can be exported to provider-specific formats (OpenAI messages array, etc.).
     """
+
     model_config = ConfigDict(frozen=True)
 
     blocks: list[MessageBlock] = Field(default_factory=list)
@@ -439,10 +461,12 @@ class ConjuredPrompt(BaseModel):
         messages: list[dict[str, str]] = []
 
         for block in self.blocks:
-            messages.append({
-                "role": mapping.get(block.role, block.role.value),
-                "content": block.content,
-            })
+            messages.append(
+                {
+                    "role": mapping.get(block.role, block.role.value),
+                    "content": block.content,
+                }
+            )
 
         # Anthropic: merge consecutive system messages
         if fmt == "anthropic" and len(messages) > 1:
@@ -473,6 +497,7 @@ class GrimoireManifest(BaseModel):
     """
     The grimoire.yaml manifest describing a grimoire pack/repo.
     """
+
     model_config = ConfigDict(extra="allow")
 
     name: str = "default"

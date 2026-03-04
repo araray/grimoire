@@ -31,10 +31,7 @@ def _make_spell(
     if variables is None:
         variables = {}
 
-    raw_blocks = [
-        MessageBlock(role=MessageRole(role), content=content)
-        for role, content in blocks
-    ]
+    raw_blocks = [MessageBlock(role=MessageRole(role), content=content) for role, content in blocks]
     return Spell(
         id=spell_id,
         name=spell_id,
@@ -47,9 +44,11 @@ class TestVariableSubstitution:
     """Tests for {{ variable }} rendering."""
 
     def test_simple_variable(self) -> None:
-        spell = _make_spell(variables={
-            "name": VariableSpec(type=VariableType.STRING, required=True),
-        })
+        spell = _make_spell(
+            variables={
+                "name": VariableSpec(type=VariableType.STRING, required=True),
+            }
+        )
         engine = ConjureEngine()
         result = engine.conjure(spell, variables={"name": "Alice"})
         assert result.blocks[0].content == "Hello Alice"
@@ -224,19 +223,25 @@ class TestRuneIntrospection:
     """Tests for rune-aware rendering."""
 
     def _make_engine_with_git_rune(self) -> ConjureEngine:
-        rune = parse_rune({
-            "id": "devtools/git",
-            "name": "Git",
-            "tags": ["devtools", "engineering"],
-            "risk_level": "low",
-            "permissions": ["read_fs"],
-            "commands": [
-                {"name": "status", "summary": "Show status", "params": [
-                    {"name": "porcelain", "type": "bool"},
-                ]},
-                {"name": "diff", "summary": "Show diff", "params": []},
-            ],
-        })
+        rune = parse_rune(
+            {
+                "id": "devtools/git",
+                "name": "Git",
+                "tags": ["devtools", "engineering"],
+                "risk_level": "low",
+                "permissions": ["read_fs"],
+                "commands": [
+                    {
+                        "name": "status",
+                        "summary": "Show status",
+                        "params": [
+                            {"name": "porcelain", "type": "bool"},
+                        ],
+                    },
+                    {"name": "diff", "summary": "Show diff", "params": []},
+                ],
+            }
+        )
         return ConjureEngine(runes={rune.id: rune})
 
     def test_runes_list(self) -> None:

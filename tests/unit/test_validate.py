@@ -83,7 +83,8 @@ class TestValidateSpell:
         result = validate_spell(spell)
         # Should not have assumption/failure warnings
         assumption_warnings = [
-            d for d in result.warnings
+            d
+            for d in result.warnings
             if "assumption" in d.message.lower() or "failure" in d.message.lower()
         ]
         assert len(assumption_warnings) == 0
@@ -138,6 +139,4 @@ class TestValidateRepo:
         # which doesn't exist — that should be an error only if the spell
         # has requires_runes. Our fixture greet spell doesn't.
         # So it should be clean.
-        assert result.ok or any(
-            "not found" in d.message for d in result.errors
-        )
+        assert result.ok or any("not found" in d.message for d in result.errors)

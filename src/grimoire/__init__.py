@@ -8,6 +8,14 @@ Manage spells (prompt templates), runes (skill contracts), and rituals
 
 from importlib.metadata import PackageNotFoundError, version
 
+from grimoire.bind import (
+    Binder,
+    BindResult,
+    BindTarget,
+    LLMCoreBinder,
+    SemantiscanBinder,
+    WairuBinder,
+)
 from grimoire.conjure.engine import ConjureEngine
 from grimoire.exceptions import (
     ArtifactNotFoundError,
@@ -47,10 +55,15 @@ try:
     __version__ = version("grimoire")
 except PackageNotFoundError:
     from grimoire.get_version import _get_version_from_pyproject
+
     __version__ = _get_version_from_pyproject()
 
 __all__ = [
     "ArtifactNotFoundError",
+    # Bind
+    "BindResult",
+    "BindTarget",
+    "Binder",
     "CircularIncludeError",
     "ConjureEngine",
     "ConjureError",
@@ -61,6 +74,7 @@ __all__ = [
     "GrimoireManifest",
     "GrimoireRepo",
     "IncludeError",
+    "LLMCoreBinder",
     "ManifestError",
     "MessageBlock",
     "MessageRole",
@@ -74,12 +88,14 @@ __all__ = [
     "RuneParseError",
     "RuneSpec",
     "RuneValidationError",
+    "SemantiscanBinder",
     "Spell",
     "SpellError",
     "SpellParseError",
     "SpellValidationError",
     "ValidationError",
     "VariableSpec",
+    "WairuBinder",
     # Version
     "__version__",
     "parse_rune",

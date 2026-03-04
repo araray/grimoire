@@ -13,15 +13,26 @@ Built to power **llmcore · semantiscan · wairu** while staying vendor-neutral 
 
 ## Status
 
-**Phase 0 — Skeleton** (current):
-- ✅ Grimoire repository manifest + loading
-- ✅ Spell parser (`.spell.md` with YAML frontmatter + message blocks)
-- ✅ Rune parser (`.rune.yaml` with command schemas)
-- ✅ Promptlet discovery (reusable `.md` components)
-- ✅ Conjure engine (deterministic rendering with variable resolution, includes, rune introspection)
-- ✅ Validation rules (spell/rune/repo diagnostics)
-- ✅ CLI (`init`, `spell`, `rune`, `conjure`, `doctor`)
-- ✅ 128 tests, 86%+ coverage, lint-clean
+**Phase 0 — Skeleton**: ✅ Complete
+- Grimoire repository manifest + loading
+- Spell parser (`.spell.md` with YAML frontmatter + message blocks)
+- Rune parser (`.rune.yaml` with command schemas)
+- Promptlet discovery (reusable `.md` components)
+- Conjure engine (deterministic rendering with variable resolution, includes, rune introspection)
+- Validation rules (spell/rune/repo diagnostics)
+- CLI (`init`, `spell`, `rune`, `conjure`, `doctor`)
+
+**Phase 1 — CLI MVP**: ✅ Complete
+- Profile overlay loading (`--profile user/alice`)
+- Interactive variable fill (`--ask-missing`, `--ask-all`) with full type validation
+
+**Phase 2 — Binding Targets**: ✅ Complete
+- Semantiscan binder (TOML + legacy `.tmpl` export)
+- llmcore binder (prompt registry + activity definitions + manifest)
+- Wairu binder (tool packs + augmentations + manifest)
+- CLI `grimoire bind <target>` command with `--dry-run`, filters, format selection
+
+**198 tests, 87%+ coverage, lint-clean**
 
 ## Architecture
 
@@ -41,20 +52,26 @@ grimoire/
 │   │   └── repo.py           # Discovery, indexing, catalog
 │   ├── validate/             # Validation rules
 │   │   └── rules.py          # Spell/rune/repo diagnostics
+│   ├── bind/                 # Binding targets (Phase 2)
+│   │   ├── base.py           # Abstract binder + result types
+│   │   ├── semantiscan.py    # TOML + legacy .tmpl export
+│   │   ├── llmcore.py        # Registry bundle (JSON prompts + activities)
+│   │   └── wairu.py          # Tool pack (YAML tools + augmentations)
 │   ├── cli/                  # Click CLI
 │   │   ├── __init__.py       # Main group + global options
-│   │   ├── helpers.py        # Shared CLI utilities
+│   │   ├── helpers.py        # Shared CLI utilities, profiles, interactive fill
 │   │   └── commands/         # Subcommands
 │   │       ├── init.py       # grimoire init
 │   │       ├── spell.py      # grimoire spell list|show|vars
 │   │       ├── rune.py       # grimoire rune list|show|validate
 │   │       ├── conjure.py    # grimoire conjure
+│   │       ├── bind.py       # grimoire bind semantiscan|llmcore|wairu
 │   │       └── doctor.py     # grimoire doctor
 │   ├── rituals/              # (Phase 3 stub)
 │   ├── config/               # (Phase 1+ config)
 │   └── get_version.py        # Version from pyproject.toml
 ├── tests/
-│   ├── unit/                 # 128 unit + integration tests
+│   ├── unit/                 # 198 unit + integration tests
 │   ├── golden/               # Golden test outputs (Phase 1)
 │   └── fixtures/             # Sample grimoire repo + artifacts
 ├── pyproject.toml            # Project configuration
@@ -106,6 +123,22 @@ grimoire conjure examples/hello --ask-missing
 grimoire rune list
 grimoire rune show devtools/git
 grimoire rune validate
+```
+
+### Bind to Runtime Targets
+
+```bash
+# Export for semantiscan (TOML format)
+grimoire bind semantiscan --format toml
+
+# Export for llmcore (registry bundle)
+grimoire bind llmcore --out exports/llmcore/
+
+# Export for wairu (tool pack)
+grimoire bind wairu --runes devtools/git
+
+# Dry run (preview without writing)
+grimoire bind semantiscan --dry-run --tags rag
 ```
 
 ### Diagnose Issues

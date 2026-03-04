@@ -26,10 +26,7 @@ def spell_list(ctx: click.Context, tags: str | None, as_json: bool) -> None:
     spells = repo.list_spells(tags=tag_list)
 
     if as_json:
-        data = [
-            {"id": s.id, "name": s.name, "version": s.version, "tags": s.tags}
-            for s in spells
-        ]
+        data = [{"id": s.id, "name": s.name, "version": s.version, "tags": s.tags} for s in spells]
         click.echo(json.dumps(data, indent=2))
         return
 
@@ -37,10 +34,7 @@ def spell_list(ctx: click.Context, tags: str | None, as_json: bool) -> None:
         click.echo("No spells found.")
         return
 
-    rows = [
-        [s.id, s.name, s.version, ", ".join(s.tags)]
-        for s in spells
-    ]
+    rows = [[s.id, s.name, s.version, ", ".join(s.tags)] for s in spells]
     click.echo(format_table(["ID", "Name", "Version", "Tags"], rows))
 
 
@@ -109,10 +103,7 @@ def spell_vars(ctx: click.Context, spell_id: str, as_json: bool) -> None:
         return
 
     if as_json:
-        data = {
-            name: spec.model_dump()
-            for name, spec in spell.variables.items()
-        }
+        data = {name: spec.model_dump() for name, spec in spell.variables.items()}
         click.echo(json.dumps(data, indent=2))
         return
 

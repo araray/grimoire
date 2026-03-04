@@ -57,11 +57,21 @@ _BLOCK_HEADER_RE = re.compile(
 )
 
 # Valid front-matter keys (for warning on unknowns)
-_KNOWN_FM_KEYS = frozenset({
-    "id", "name", "version", "tags", "description", "license",
-    "variables", "requires_runes", "suggests_runes", "runes_export",
-    "output_contract",
-})
+_KNOWN_FM_KEYS = frozenset(
+    {
+        "id",
+        "name",
+        "version",
+        "tags",
+        "description",
+        "license",
+        "variables",
+        "requires_runes",
+        "suggests_runes",
+        "runes_export",
+        "output_contract",
+    }
+)
 
 
 def _split_frontmatter(text: str) -> tuple[str, str]:
@@ -84,13 +94,13 @@ def _split_frontmatter(text: str) -> tuple[str, str]:
     # Find the closing ---
     # The opening --- may be preceded by whitespace/BOM
     first_delim = stripped.index("---")
-    rest = stripped[first_delim + 3:]
+    rest = stripped[first_delim + 3 :]
     second_delim = rest.find("\n---")
     if second_delim == -1:
         raise SpellParseError("No closing '---' for YAML front-matter")
 
     fm_text = rest[:second_delim]
-    body = rest[second_delim + 4:]  # skip "\n---"
+    body = rest[second_delim + 4 :]  # skip "\n---"
 
     return fm_text.strip(), body.strip()
 
@@ -160,9 +170,7 @@ def _parse_variables(raw: dict | None) -> dict[str, VariableSpec]:
             try:
                 variables[name] = VariableSpec(**spec_data)
             except Exception as e:
-                raise SpellValidationError(
-                    f"Invalid variable spec for '{name}': {e}"
-                ) from e
+                raise SpellValidationError(f"Invalid variable spec for '{name}': {e}") from e
         else:
             raise SpellValidationError(
                 f"Variable '{name}' must be a string (type shorthand) or dict, got {type(spec_data)}"

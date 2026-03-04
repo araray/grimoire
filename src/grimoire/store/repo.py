@@ -292,17 +292,16 @@ class GrimoireRepo:
             ],
             "runes": [
                 {
-                    "id": r.id, "name": r.name, "version": r.version,
-                    "tags": r.tags, "commands": [c.name for c in r.commands],
+                    "id": r.id,
+                    "name": r.name,
+                    "version": r.version,
+                    "tags": r.tags,
+                    "commands": [c.name for c in r.commands],
                 }
                 for r in self.list_runes()
             ],
-            "promptlets": [
-                {"id": p.id}
-                for p in self.list_promptlets()
-            ],
+            "promptlets": [{"id": p.id} for p in self.list_promptlets()],
             "rituals": [
-                {"id": r.id, "name": r.name, "steps": len(r.steps)}
-                for r in self.list_rituals()
+                {"id": r.id, "name": r.name, "steps": len(r.steps)} for r in self.list_rituals()
             ],
         }

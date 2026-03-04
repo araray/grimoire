@@ -10,42 +10,48 @@ import sys
 
 import click
 
-from grimoire.cli.commands import conjure, doctor, init, rune, spell
+from grimoire.cli.commands import bind, conjure, doctor, init, rune, spell
 
 logger = logging.getLogger(__name__)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.option(
-    "--repo", "repo_path",
+    "--repo",
+    "repo_path",
     type=click.Path(exists=False),
     default=".",
     help="Path to grimoire repository root (default: cwd).",
 )
 @click.option(
-    "--profile", "profiles",
+    "--profile",
+    "profiles",
     multiple=True,
     help="Profile overlay(s) to apply (repeatable).",
 )
 @click.option(
-    "--vars", "vars_files",
+    "--vars",
+    "vars_files",
     multiple=True,
     type=click.Path(exists=True),
     help="YAML vars file(s) to load (repeatable).",
 )
 @click.option(
-    "--set", "set_vars",
+    "--set",
+    "set_vars",
     multiple=True,
     help="Set a variable: key=value (repeatable).",
 )
 @click.option(
-    "--format", "output_format",
+    "--format",
+    "output_format",
     type=click.Choice(["text", "openai", "anthropic", "json"], case_sensitive=False),
     default="text",
     help="Output format for conjured prompts.",
 )
 @click.option(
-    "--out", "output_path",
+    "--out",
+    "output_path",
     type=click.Path(),
     help="Write output to file instead of stdout.",
 )
@@ -85,7 +91,9 @@ def cli(ctx, repo_path, profiles, vars_files, set_vars, output_format, output_pa
             k, v = pair.split("=", 1)
             explicit_vars[k.strip()] = v.strip()
         else:
-            click.secho(f"Warning: --set '{pair}' ignored (expected key=value)", fg="yellow", err=True)
+            click.secho(
+                f"Warning: --set '{pair}' ignored (expected key=value)", fg="yellow", err=True
+            )
 
     # Store context for subcommands
     ctx.ensure_object(dict)
@@ -102,4 +110,5 @@ cli.add_command(init.init_cmd, "init")
 cli.add_command(spell.spell_group, "spell")
 cli.add_command(rune.rune_group, "rune")
 cli.add_command(conjure.conjure_cmd, "conjure")
+cli.add_command(bind.bind_cmd, "bind")
 cli.add_command(doctor.doctor_cmd, "doctor")

@@ -203,6 +203,46 @@ print(result.provenance.includes_resolved)
 catalog = repo.catalog()
 ```
 
+### Binding API
+
+```python
+from grimoire.bind import (
+    BindTarget,
+    BindFormat,
+    SemantiscanBinder,
+    LLMCoreBinder,
+    WairuBinder,
+)
+
+# Load repo
+repo = GrimoireRepo.load("/path/to/grimoire")
+spells = repo.list_spells()
+runes = repo.list_runes()
+
+# Bind to semantiscan (TOML format)
+binder = SemantiscanBinder()
+result = binder.bind(spells=spells, runes=runes, fmt=BindFormat.TOML)
+result.write("/path/to/exports/semantiscan/")
+
+# Bind to llmcore (registry bundle)
+binder = LLMCoreBinder()
+result = binder.bind(spells=spells, runes=runes)
+result.write("/path/to/exports/llmcore/")
+
+# Bind to wairu (tool pack)
+binder = WairuBinder()
+result = binder.bind(spells=spells, runes=runes)
+result.write("/path/to/exports/wairu/")
+
+# Inspect results without writing
+for f in result.files:
+    print(f"{f.relative_path}: {f.description}")
+
+# Check warnings
+for w in result.warnings:
+    print(f"WARNING: {w}")
+```
+
 ## Variable Precedence
 
 Variables resolve in this order (highest → lowest):
@@ -213,6 +253,125 @@ Variables resolve in this order (highest → lowest):
 4. Grimoire defaults (`vars/defaults.yaml`)
 5. Spell defaults (in frontmatter)
 6. Built-ins (`grimoire.now.*`, `grimoire.spell.*`)
+
+## Profile Overlays
+
+Profiles are YAML files in the `profiles/` directory that provide variable presets:
+
+```yaml
+# profiles/user/alice.yaml
+name: Alice
+team: platform
+preferred_format: markdown
+```
+
+Apply profiles with `--profile`:
+
+```bash
+# Single profile
+grimoire --profile user/alice conjure engineering/rca --set issue_title="Bug"
+
+# Multiple profiles (merged in order, last wins)
+grimoire --profile user/alice --profile env/staging conjure engineering/rca
+
+# Profiles search under all configured profile_paths
+# e.g. profiles/user/alice.yaml, profiles/user/alice.yml
+```
+
+## Interactive Variable Fill
+
+The conjure command supports interactive prompting for variables:
+
+```bash
+# Prompt for missing required variables only
+grimoire conjure engineering/rca --ask-missing
+
+# Confirm all variables (including defaults)
+grimoire conjure engineering/rca --ask-all
+```
+
+Type-aware prompting:
+- **boolean**: yes/no confirmation
+- **choice**: numbered menu selection
+- **multiline**: multi-line input (blank line terminates)
+- **integer/float**: validated with min/max constraints
+- **list**: comma-separated values
+- **string**: single-line text
+
+## Bind Command — Export to Runtime Targets
+
+The `grimoire bind` command compiles grimoire artifacts into runtime-specific formats
+for consumption by semantiscan, llmcore, and wairu.
+
+### `grimoire bind semantiscan`
+
+```bash
+# TOML format (PromptManager-compatible)
+grimoire bind semantiscan --format toml
+
+# Legacy .tmpl format (single-string templates)
+grimoire bind semantiscan --format legacy_tmpl
+
+# Filter to specific spells or tags
+grimoire bind semantiscan --spells engineering/rca,engineering/rfc
+grimoire bind semantiscan --tags rag
+
+# Custom output directory
+grimoire bind semantiscan --out exports/semantiscan/
+```
+
+**TOML output** includes `[metadata]`, `[prompts]` (system/user), and `[defaults]` sections.
+Variable syntax is converted: `{{ var }}` → `{var}`, with built-in remapping
+(e.g. `grimoire.now.date` → `current_date`).
+
+**Legacy `.tmpl` output** combines all blocks into a single string and auto-injects
+`{context}` / `{question}` placeholders if not already present.
+
+### `grimoire bind llmcore`
+
+```bash
+# Registry bundle (default)
+grimoire bind llmcore
+
+# Filter by tags
+grimoire bind llmcore --tags engineering
+
+# Dry-run preview
+grimoire bind llmcore --dry-run
+```
+
+Produces a registry bundle:
+- `prompts/*.json` — one file per spell with messages, variable schemas, content hash
+- `activities/*.json` — one file per rune with command schemas, risk levels, tool definitions
+- `manifest.json` — index of all prompt and activity files
+
+Activity files include OpenAI-compatible `function` schemas for tool calling.
+
+### `grimoire bind wairu`
+
+```bash
+# Tool pack (default)
+grimoire bind wairu
+
+# Filter by rune
+grimoire bind wairu --runes devtools/git
+```
+
+Produces a tool pack:
+- `tools/*.yaml` — one file per rune with tool definitions (commands, params, risk, approval)
+- `augmentations/*.yaml` — agentic spells (tagged `agentic`) as prompt augmentations
+- `tool_manifest.json` — index with risk summaries and command counts
+
+### Common Options
+
+```bash
+--dry-run          # Preview output without writing files
+--out DIR          # Output directory (default: exports/<target>/)
+--spells IDS       # Comma-separated spell IDs to include
+--runes IDS        # Comma-separated rune IDs to include
+--tags TAGS        # Comma-separated tags to filter by
+--format FMT       # Sub-format (target-specific)
+```
 
 ## Repository Structure
 

@@ -13,6 +13,7 @@ class GrimoireError(Exception):
 
 # ── Store / Repo ────────────────────────────────────────────────────────────
 
+
 class RepoError(GrimoireError):
     """Error related to grimoire repository operations."""
 
@@ -26,6 +27,7 @@ class ArtifactNotFoundError(RepoError):
 
 
 # ── Spell parsing ───────────────────────────────────────────────────────────
+
 
 class SpellError(GrimoireError):
     """Error parsing or validating a spell."""
@@ -41,6 +43,7 @@ class SpellValidationError(SpellError):
 
 # ── Rune parsing ────────────────────────────────────────────────────────────
 
+
 class RuneError(GrimoireError):
     """Error parsing or validating a rune."""
 
@@ -54,6 +57,7 @@ class RuneValidationError(RuneError):
 
 
 # ── Conjure (rendering) ────────────────────────────────────────────────────
+
 
 class ConjureError(GrimoireError):
     """Error during spell/ritual conjuring (rendering)."""
@@ -73,11 +77,13 @@ class CircularIncludeError(IncludeError):
 
 # ── Ritual ──────────────────────────────────────────────────────────────────
 
+
 class RitualError(GrimoireError):
     """Error parsing or evaluating a ritual."""
 
 
 # ── Validation ──────────────────────────────────────────────────────────────
+
 
 class ValidationError(GrimoireError):
     """Schema or lint validation failure."""

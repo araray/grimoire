@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 class Severity(str, Enum):
     """Diagnostic severity levels."""
+
     ERROR = "error"
     WARNING = "warning"
     INFO = "info"
@@ -29,6 +30,7 @@ class Severity(str, Enum):
 @dataclass
 class Diagnostic:
     """A single validation finding."""
+
     severity: Severity
     message: str
     artifact_id: str | None = None
@@ -38,6 +40,7 @@ class Diagnostic:
 @dataclass
 class ValidationResult:
     """Aggregated validation result."""
+
     diagnostics: list[Diagnostic] = field(default_factory=list)
 
     @property
@@ -87,7 +90,8 @@ def validate_spell(spell: Spell) -> ValidationResult:
             result.add(
                 Severity.WARNING,
                 f"Required variable '{name}' has no 'ask' prompt for interactive fill",
-                artifact_id=spell.id, field=f"variables.{name}",
+                artifact_id=spell.id,
+                field=f"variables.{name}",
             )
 
     # Engineering spell lint (spec §13)
@@ -128,16 +132,22 @@ def validate_rune(rune: RuneSpec) -> ValidationResult:
             result.add(
                 Severity.WARNING,
                 f"Command '{cmd.name}' has no summary",
-                artifact_id=rune.id, field=f"commands.{cmd.name}",
+                artifact_id=rune.id,
+                field=f"commands.{cmd.name}",
             )
 
         # High-risk commands should require approval
         effective_risk = cmd.risk_level or rune.risk_level
-        if effective_risk in ("high", "medium") and not cmd.requires_approval and not rune.requires_approval:
+        if (
+            effective_risk in ("high", "medium")
+            and not cmd.requires_approval
+            and not rune.requires_approval
+        ):
             result.add(
                 Severity.WARNING,
                 f"Command '{cmd.name}' has risk_level={effective_risk.value} but requires_approval is False",
-                artifact_id=rune.id, field=f"commands.{cmd.name}",
+                artifact_id=rune.id,
+                field=f"commands.{cmd.name}",
             )
 
     return result

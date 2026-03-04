@@ -61,7 +61,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Global options: `--repo`, `--profile`, `--vars`, `--set`, `--format`, `--out`, `--log-level`
 - Output formats: text, openai, anthropic, json
 
+### Added — Phase 1 Completion: CLI MVP
+
+**Profile Overlays** (`cli/helpers.py`)
+- `--profile user/name` loads YAML overlay files from profiles/ directory
+- Multiple profiles supported; merged in order (last wins)
+- Profile resolution across all configured profile_paths
+
+**Interactive Variable Fill** (`cli/helpers.py`)
+- `--ask-missing` prompts for missing required variables with type validation
+- `--ask-all` confirms all variables interactively (including defaults)
+- Type-aware prompting: boolean (yes/no), choice (numbered menu),
+  multiline (blank line terminates), integer/float (with min/max validation),
+  list (comma-separated)
+
+### Added — Phase 2: Binding Targets
+
+**Bind Module** (`bind/`)
+- Abstract `Binder` base class with `BindResult`, `BoundFile`, `BindTarget` types
+- Three concrete binders: `SemantiscanBinder`, `LLMCoreBinder`, `WairuBinder`
+- Disk-write support: `result.write(out_dir)` with automatic directory creation
+- Pre-bind (CI/offline) mode for all targets
+
+**Semantiscan Binder** (`bind/semantiscan.py`)
+- TOML export (PromptManager format): `[metadata]`, `[prompts]`, `[defaults]` sections
+- Legacy `.tmpl` export: single-string templates with `{context}` / `{question}`
+- Automatic variable syntax conversion: `{{ var }}` → `{var}`
+- Built-in variable remapping: `grimoire.now.date` → `current_date`, etc.
+- Auto-injection of `{context}` / `{question}` when missing from legacy templates
+
+**llmcore Binder** (`bind/llmcore.py`)
+- Prompt registry bundle: JSON per spell with messages, variables, content hash
+- Activity definitions from runes: JSON with risk levels, parameter schemas
+- OpenAI-compatible tool/function schemas generated from rune commands
+- Registry manifest (`manifest.json`) with prompt and activity indexes
+
+**Wairu Binder** (`bind/wairu.py`)
+- Tool pack export: YAML per rune with tool definitions, risk/approval metadata
+- Augmentation prompts: auto-detected agentic spells exported as companion files
+- Tool manifest (`tool_manifest.json`) with indexes and risk summaries
+- Source tracking (`_source: grimoire`, `_content_hash`) for drift detection
+
+**CLI** (`cli/commands/bind.py`)
+- `grimoire bind semantiscan [--format toml|legacy_tmpl]`
+- `grimoire bind llmcore`
+- `grimoire bind wairu`
+- `--spells`, `--runes`, `--tags` filters for selective binding
+- `--dry-run` to preview output without writing
+- `--out` to specify output directory (default: `exports/<target>/`)
+
 **Testing**
-- 128 tests (unit + integration)
-- 86%+ branch coverage
+- 198 tests (unit + integration)
+- 87%+ branch coverage
 - Clean ruff lint

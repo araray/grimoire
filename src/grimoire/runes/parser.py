@@ -91,25 +91,23 @@ def _parse_commands(raw_commands: list[dict] | None) -> list[CommandSpec]:
             try:
                 examples.append(CommandExample(**ex))
             except Exception as e:
-                raise RuneValidationError(
-                    f"Invalid example in command '{cmd_name}': {e}"
-                ) from e
+                raise RuneValidationError(f"Invalid example in command '{cmd_name}': {e}") from e
 
         try:
-            commands.append(CommandSpec(
-                name=cmd_name,
-                summary=cmd_data.get("summary"),
-                params=params,
-                returns=returns,
-                side_effects=cmd_data.get("side_effects", []),
-                risk_level=cmd_data.get("risk_level"),
-                requires_approval=cmd_data.get("requires_approval", False),
-                examples=examples,
-            ))
+            commands.append(
+                CommandSpec(
+                    name=cmd_name,
+                    summary=cmd_data.get("summary"),
+                    params=params,
+                    returns=returns,
+                    side_effects=cmd_data.get("side_effects", []),
+                    risk_level=cmd_data.get("risk_level"),
+                    requires_approval=cmd_data.get("requires_approval", False),
+                    examples=examples,
+                )
+            )
         except Exception as e:
-            raise RuneValidationError(
-                f"Failed to construct command '{cmd_name}': {e}"
-            ) from e
+            raise RuneValidationError(f"Failed to construct command '{cmd_name}': {e}") from e
 
     return commands
 

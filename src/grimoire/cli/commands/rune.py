@@ -29,8 +29,11 @@ def rune_list(ctx: click.Context, tags: str | None, as_json: bool) -> None:
     if as_json:
         data = [
             {
-                "id": r.id, "name": r.name, "version": r.version,
-                "tags": r.tags, "risk": r.risk_level.value,
+                "id": r.id,
+                "name": r.name,
+                "version": r.version,
+                "tags": r.tags,
+                "risk": r.risk_level.value,
                 "commands": [c.name for c in r.commands],
             }
             for r in runes
@@ -44,7 +47,9 @@ def rune_list(ctx: click.Context, tags: str | None, as_json: bool) -> None:
 
     rows = [
         [
-            r.id, r.name, r.risk_level.value,
+            r.id,
+            r.name,
+            r.risk_level.value,
             str(len(r.commands)),
             ", ".join(r.tags),
         ]

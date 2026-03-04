@@ -142,48 +142,86 @@ class TestConjureCommand:
     """Tests for ``grimoire conjure``."""
 
     def test_conjure_text(self, runner: CliRunner, repo_args: list[str]) -> None:
-        result = runner.invoke(cli, [
-            *repo_args, "--set", "user_name=TestUser",
-            "conjure", "examples/greet",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--set",
+                "user_name=TestUser",
+                "conjure",
+                "examples/greet",
+            ],
+        )
         assert result.exit_code == 0, result.output
         assert "TestUser" in result.output
         assert "# SYSTEM" in result.output
         assert "# USER" in result.output
 
     def test_conjure_openai_format(self, runner: CliRunner, repo_args: list[str]) -> None:
-        result = runner.invoke(cli, [
-            *repo_args, "--format", "openai", "--set", "user_name=OAI",
-            "conjure", "examples/greet",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--format",
+                "openai",
+                "--set",
+                "user_name=OAI",
+                "conjure",
+                "examples/greet",
+            ],
+        )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert isinstance(data, list)
         assert data[0]["role"] == "system"
 
     def test_conjure_json_format(self, runner: CliRunner, repo_args: list[str]) -> None:
-        result = runner.invoke(cli, [
-            *repo_args, "--format", "json", "--set", "user_name=JSON",
-            "conjure", "examples/greet",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--format",
+                "json",
+                "--set",
+                "user_name=JSON",
+                "conjure",
+                "examples/greet",
+            ],
+        )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert "messages" in data
 
     def test_conjure_with_provenance(self, runner: CliRunner, repo_args: list[str]) -> None:
-        result = runner.invoke(cli, [
-            *repo_args, "--set", "user_name=Prov",
-            "conjure", "examples/greet", "--provenance",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--set",
+                "user_name=Prov",
+                "conjure",
+                "examples/greet",
+                "--provenance",
+            ],
+        )
         assert result.exit_code == 0, result.output
         assert "PROVENANCE" in result.output
         assert "examples/greet" in result.output
 
     def test_conjure_json_with_provenance(self, runner: CliRunner, repo_args: list[str]) -> None:
-        result = runner.invoke(cli, [
-            *repo_args, "--format", "json", "--set", "user_name=JP",
-            "conjure", "examples/greet", "--provenance",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--format",
+                "json",
+                "--set",
+                "user_name=JP",
+                "conjure",
+                "examples/greet",
+                "--provenance",
+            ],
+        )
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert "provenance" in data
@@ -195,10 +233,18 @@ class TestConjureCommand:
 
     def test_conjure_to_file(self, runner: CliRunner, repo_args: list[str], tmp_path: Path) -> None:
         out_file = tmp_path / "output.txt"
-        result = runner.invoke(cli, [
-            *repo_args, "--out", str(out_file), "--set", "user_name=File",
-            "conjure", "examples/greet",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--out",
+                str(out_file),
+                "--set",
+                "user_name=File",
+                "conjure",
+                "examples/greet",
+            ],
+        )
         assert result.exit_code == 0, result.output
         content = out_file.read_text()
         assert "File" in content
@@ -206,9 +252,15 @@ class TestConjureCommand:
     def test_conjure_no_strict(self, runner: CliRunner, repo_args: list[str]) -> None:
         """Non-strict mode: user_name gets resolved from defaults, but we can
         verify the greet spell renders without error even with no explicit vars."""
-        result = runner.invoke(cli, [
-            *repo_args, "conjure", "examples/greet", "--no-strict",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "conjure",
+                "examples/greet",
+                "--no-strict",
+            ],
+        )
         assert result.exit_code == 0
         # user_name resolved from default_vars ("World"), language from spell default ("English")
         assert "World" in result.output
@@ -245,9 +297,15 @@ class TestGlobalOptions:
 
     def test_set_vars_parsing(self, runner: CliRunner, repo_args: list[str]) -> None:
         """Test that --set key=value works correctly."""
-        result = runner.invoke(cli, [
-            *repo_args, "--set", "user_name=SetTest",
-            "conjure", "examples/greet",
-        ])
+        result = runner.invoke(
+            cli,
+            [
+                *repo_args,
+                "--set",
+                "user_name=SetTest",
+                "conjure",
+                "examples/greet",
+            ],
+        )
         assert result.exit_code == 0
         assert "SetTest" in result.output

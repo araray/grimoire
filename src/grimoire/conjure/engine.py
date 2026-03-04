@@ -53,9 +53,7 @@ _ESCAPE_OPEN = re.compile(r"\{\{\{\{")
 _ESCAPE_CLOSE = re.compile(r"\}\}\}\}")
 
 # Include directive: {{ include("path/to/promptlet") }}
-_INCLUDE_RE = re.compile(
-    r"\{\{\s*include\(\s*[\"']([^\"']+)[\"']\s*\)\s*\}\}"
-)
+_INCLUDE_RE = re.compile(r"\{\{\s*include\(\s*[\"']([^\"']+)[\"']\s*\)\s*\}\}")
 
 # Variable with default: {{ var|default("value") }} or {{ var|default(value) }}
 _VAR_DEFAULT_RE = re.compile(
@@ -63,17 +61,11 @@ _VAR_DEFAULT_RE = re.compile(
 )
 
 # Plain variable: {{ var_name }}
-_VAR_RE = re.compile(
-    r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}"
-)
+_VAR_RE = re.compile(r"\{\{\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*\}\}")
 
 # Rune introspection calls (Phase 0: rendered as text descriptions)
-_RUNE_LIST_RE = re.compile(
-    r"\{\{\s*runes\.list\(\s*tags\s*=\s*\[([^\]]*)\]\s*\)\s*\}\}"
-)
-_RUNE_DESCRIBE_RE = re.compile(
-    r"\{\{\s*runes\.describe\(\s*[\"']([^\"']+)[\"']\s*\)\s*\}\}"
-)
+_RUNE_LIST_RE = re.compile(r"\{\{\s*runes\.list\(\s*tags\s*=\s*\[([^\]]*)\]\s*\)\s*\}\}")
+_RUNE_DESCRIBE_RE = re.compile(r"\{\{\s*runes\.describe\(\s*[\"']([^\"']+)[\"']\s*\)\s*\}\}")
 _RUNE_CMD_SIG_RE = re.compile(
     r"\{\{\s*runes\.command\(\s*[\"']([^\"']+)[\"']\s*,\s*[\"']([^\"']+)[\"']\s*\)\.signature\s*\}\}"
 )
@@ -150,8 +142,9 @@ class ConjureEngine:
         provenance = Provenance(
             spell_id=spell.id,
             spell_hash=spell.content_hash,
-            variables_used={k: str(v) for k, v in effective_vars.items()
-                           if not k.startswith("grimoire.")},
+            variables_used={
+                k: str(v) for k, v in effective_vars.items() if not k.startswith("grimoire.")
+            },
             includes_resolved=includes_resolved,
             runes_referenced=runes_referenced,
         )
@@ -235,9 +228,14 @@ class ConjureEngine:
 
         # Step 2: Resolve includes
         result = self._resolve_includes(
-            result, variables, spell, strict,
-            includes_resolved, runes_referenced,
-            _depth, _include_stack,
+            result,
+            variables,
+            spell,
+            strict,
+            includes_resolved,
+            runes_referenced,
+            _depth,
+            _include_stack,
         )
 
         # Step 3: Resolve rune introspection
@@ -316,10 +314,7 @@ class ConjureEngine:
             tags = [t.strip().strip("\"'") for t in tags_str.split(",") if t.strip()]
             tag_set = set(tags)
 
-            matching = [
-                r for r in self._runes.values()
-                if tag_set.issubset(set(r.tags))
-            ]
+            matching = [r for r in self._runes.values() if tag_set.issubset(set(r.tags))]
             if not matching:
                 return "(no matching runes)"
 
@@ -342,7 +337,9 @@ class ConjureEngine:
             lines = [f"**{rune.name}** (v{rune.version})"]
             if rune.description:
                 lines.append(rune.description)
-            lines.append(f"Risk: {rune.risk_level.value} | Permissions: {', '.join(p.value for p in rune.permissions)}")
+            lines.append(
+                f"Risk: {rune.risk_level.value} | Permissions: {', '.join(p.value for p in rune.permissions)}"
+            )
             for cmd in rune.commands:
                 params_str = ", ".join(f"{p.name}: {p.type}" for p in cmd.params)
                 lines.append(f"  - `{cmd.name}({params_str})` — {cmd.summary or ''}")
@@ -405,8 +402,7 @@ class ConjureEngine:
                 spec = spell.variables[var_name]
                 if spec.required:
                     raise MissingVariableError(
-                        f"Required variable '{var_name}' not provided "
-                        f"(spell: {spell.id})"
+                        f"Required variable '{var_name}' not provided (spell: {spell.id})"
                     )
 
             # Non-strict: leave placeholder as-is
