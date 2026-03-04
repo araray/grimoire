@@ -30,10 +30,10 @@ from grimoire.models import (
     GrimoireManifest,
     Promptlet,
     Ritual,
-    RitualStep,
     RuneSpec,
     Spell,
 )
+from grimoire.rituals.parser import parse_ritual_file
 from grimoire.runes.parser import parse_rune_file
 from grimoire.spells.parser import parse_spell_file
 
@@ -186,22 +186,10 @@ class GrimoireRepo:
         for d in dirs:
             for ritual_file in d.rglob("*.ritual.yaml"):
                 try:
-                    data = yaml.safe_load(ritual_file.read_text(encoding="utf-8"))
-                    if not isinstance(data, dict):
-                        logger.error(f"Ritual file {ritual_file} is not a mapping")
-                        continue
-                    ritual_id = data.get("id", str(ritual_file.stem))
-                    steps = []
-                    for step_data in data.get("steps", []):
-                        steps.append(RitualStep(**step_data))
-                    ritual = Ritual(
-                        id=ritual_id,
-                        name=data.get("name", ritual_id),
-                        version=data.get("version", "1.0.0"),
-                        steps=steps,
-                        source_path=str(ritual_file),
-                    )
-                    self._rituals[ritual_id] = ritual
+                    ritual = parse_ritual_file(ritual_file)
+                    if ritual.id in self._rituals:
+                        logger.warning(f"Duplicate ritual id '{ritual.id}', overwriting")
+                    self._rituals[ritual.id] = ritual
                 except Exception as e:
                     logger.error(f"Failed to parse ritual {ritual_file}: {e}")
 
@@ -269,9 +257,13 @@ class GrimoireRepo:
         """List all promptlets."""
         return sorted(self._promptlets.values(), key=lambda p: p.id)
 
-    def list_rituals(self) -> list[Ritual]:
-        """List all rituals."""
-        return sorted(self._rituals.values(), key=lambda r: r.id)
+    def list_rituals(self, tags: list[str] | None = None) -> list[Ritual]:
+        """List all rituals, optionally filtered by tags (AND logic)."""
+        rituals = list(self._rituals.values())
+        if tags:
+            tag_set = set(tags)
+            rituals = [r for r in rituals if tag_set.issubset(set(r.tags))]
+        return sorted(rituals, key=lambda r: r.id)
 
     # ── Catalog (agent-friendly) ────────────────────────────────────────────
 

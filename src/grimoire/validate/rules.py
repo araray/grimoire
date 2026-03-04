@@ -195,4 +195,11 @@ def validate_repo(repo: GrimoireRepo) -> ValidationResult:
         rune_result = validate_rune(rune)
         result.diagnostics.extend(rune_result.diagnostics)
 
+    # Validate each ritual (Phase 3)
+    from grimoire.rituals.validator import validate_ritual
+
+    for ritual in repo.list_rituals():
+        ritual_diags = validate_ritual(ritual, repo=repo)
+        result.diagnostics.extend(ritual_diags)
+
     return result

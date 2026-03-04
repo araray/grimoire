@@ -174,6 +174,64 @@ class ConjureEngine:
         effective["grimoire.spell.name"] = spell.name
         effective["grimoire.spell.version"] = spell.version
 
+        # W2: host built-ins — graceful fallback on any error
+        import os
+        import socket
+
+        try:
+            effective["grimoire.host.username"] = os.getlogin()
+        except Exception:
+            try:
+                effective["grimoire.host.username"] = os.environ.get(
+                    "USER", os.environ.get("USERNAME", "unknown")
+                )
+            except Exception:
+                effective["grimoire.host.username"] = "unknown"
+        try:
+            effective["grimoire.host.hostname"] = socket.gethostname()
+        except Exception:
+            effective["grimoire.host.hostname"] = "unknown"
+        try:
+            effective["grimoire.host.cwd"] = os.getcwd()
+        except Exception:
+            effective["grimoire.host.cwd"] = "unknown"
+
+        # W2: git built-ins — requires git in PATH; graceful fallback
+        import subprocess
+
+        try:
+            repo_name = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
+                .decode()
+                .strip()
+            )
+            effective["grimoire.git.repo_name"] = os.path.basename(repo_name)
+        except Exception:
+            effective["grimoire.git.repo_name"] = "unknown"
+        try:
+            ref = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
+                .decode()
+                .strip()
+            )
+            effective["grimoire.git.ref"] = ref
+        except Exception:
+            effective["grimoire.git.ref"] = "unknown"
+
+        # W2: run built-ins — unique identifiers for this invocation
+        import uuid
+
+        effective["grimoire.run.session_id"] = str(uuid.uuid4())
+        effective["grimoire.run.invocation_id"] = str(uuid.uuid4())
+
         # Layer 2: Spell defaults
         for name, spec in spell.variables.items():
             if spec.default is not None:

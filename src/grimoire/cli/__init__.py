@@ -10,7 +10,7 @@ import sys
 
 import click
 
-from grimoire.cli.commands import bind, conjure, doctor, init, rune, spell
+from grimoire.cli.commands import bind, conjure, doctor, init, ritual, rune, spell
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ def cli(ctx, repo_path, profiles, vars_files, set_vars, output_format, output_pa
 cli.add_command(init.init_cmd, "init")
 cli.add_command(spell.spell_group, "spell")
 cli.add_command(rune.rune_group, "rune")
+cli.add_command(ritual.ritual_group, "ritual")
 cli.add_command(conjure.conjure_cmd, "conjure")
 cli.add_command(bind.bind_cmd, "bind")
 cli.add_command(doctor.doctor_cmd, "doctor")

@@ -1,0 +1,25 @@
+id: rituals/rca_loop
+name: RCA Loop
+version: 1.0.0
+description: Root-cause analysis multi-step ritual
+tags: [engineering, debugging]
+steps:
+  - id: step_1
+    spell: examples/greet
+    description: Initial greeting step
+    conjure:
+      vars:
+        inherit: true
+    output:
+      capture: greeting
+      format: text
+  - id: step_2
+    description: Conditional follow-up step (when greeting is present)
+    when: "{{ greeting }}"
+    spell: examples/greet
+    conjure:
+      vars:
+        inherit: true
+        user_name: "follow-up"
+    output:
+      capture: followup

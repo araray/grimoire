@@ -5,7 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] — 2026-03-04
+## [Unreleased] — Phase 3 + Quick Wins
+
+### Added — Phase 3: Rituals
+
+**Ritual Parser** (`rituals/parser.py`)
+- `parse_ritual(data, source_path)` — parse from pre-loaded dict
+- `parse_ritual_file(path)` — parse `*.ritual.yaml` from disk
+- Full field parsing: `id`, `name`, `version`, `description`, `tags`, `steps`
+- Step-level fields: `id`, `spell`, `when`, `description`, `conjure`, `output`
+- Detailed error messages via `RitualParseError`
+
+**Ritual Evaluator** (`rituals/evaluator.py`)
+- `RitualEvaluator(repo, engine)` — stateless evaluator wrapping repo + conjure engine
+- `dry_run(ritual)` → `RitualAssemblyPlan` — inspect without conjuring; detects missing spells
+- `evaluate(ritual, variables, defaults)` → `list[ConjuredRitualStep]` — step-by-step evaluation
+- Step output capture: conjured text stored into named context variable
+- Context flow: captured variables available to subsequent steps' `when` conditions
+- Safe `when`-condition evaluator (no `eval()`): supports `{{ var }}`, `.contains()`,
+  `.startswith()`, `.endswith()`, `== "value"`, `!= "value"`, and boolean literals
+
+**Ritual Validator** (`rituals/validator.py`)
+- `validate_ritual(ritual, repo)` — structural + reference validation
+- Checks: missing spell IDs, duplicate step IDs, `when` syntax, `output.capture` identifier validity, `output.format` values
+
+**New data classes** (`models.py`)
+- `RitualStepPlan` — one step in a dry-run assembly plan
+- `RitualAssemblyPlan` — full plan with `.ok` property and `missing_spells` list
+- `ConjuredRitualStep` — one evaluated step (spell_id, skipped, conjured, captured_var/value)
+
+**Updated `Ritual`/`RitualStep` models** (`models.py`)
+- `Ritual` gains `description`, `tags` fields
+- `RitualStep` gains `description` field; `conjure`/`output` dict semantics documented
+
+**CLI: `grimoire ritual`** (`cli/commands/ritual.py`)
+- `grimoire ritual list [--tag TAG] [--json]` — list rituals with tag filtering
+- `grimoire ritual show <ID> [--json]` — human-readable or JSON detail view
+- `grimoire ritual dry-run <ID> [--json] [--no-validate]` — assembly plan with color diagnostics
+
+**Validation integration** (`validate/rules.py`)
+- `validate_repo()` now includes ritual validation via `validate_ritual()`
+
+**Store** (`store/repo.py`)
+- `list_rituals(tags=...)` now supports tag filtering (consistent with `list_spells`/`list_runes`)
+- Ritual discovery uses proper `parse_ritual_file()` from parser module
+
+**Tests**
+- 68 new tests: `test_ritual_parser.py` (20), `test_ritual_evaluator.py` (48)
+- Total: 266 tests passing (was 198); coverage 86.5% (floor: 85%)
+
+### Added — Quick Wins
+
+**W1: Missing model fields** (`models.py`)
+- `CommandSpec.execution_target: str | None` — hints `"local"`, `"sandbox"`, or `"remote"` for sync adapters
+- `RuneSpec.mappings: dict[str, str]` — cross-runtime name mapping (`wairu.tool_name`, `llmcore.activity_name`, etc.)
+
+**W2: Additional built-in variables** (`conjure/engine.py`)
+- `grimoire.host.username` — current user (graceful fallback to `USER`/`USERNAME` env)
+- `grimoire.host.hostname` — host name
+- `grimoire.host.cwd` — current working directory
+- `grimoire.git.repo_name` — git repository name (graceful fallback when git unavailable)
+- `grimoire.git.ref` — current git branch/ref
+- `grimoire.run.session_id` — UUID4 per session
+- `grimoire.run.invocation_id` — UUID4 per conjure call
+- All new built-ins degrade gracefully (no crash when git is absent)
+
+**W3: Variable types** (`models.py`)
+- `VariableType.JSON = "json"` — parsed JSON dict/list value
+- `VariableType.PATH = "path"` — filesystem path string
+
+**W4: Variable sensitivity** (`models.py`)
+- `VariableSensitivity` enum: `PUBLIC`, `SECRET`
+- `VariableSpec.sensitivity: VariableSensitivity` — redaction hint for provenance/logs (default: PUBLIC)
+
+**Exceptions** (`exceptions.py`)
+- `RitualParseError(RitualError)` — ritual YAML is malformed
+- `RitualValidationError(RitualError)` — ritual fails semantic validation
+
+
 
 ### Added — Phase 0: Skeleton
 

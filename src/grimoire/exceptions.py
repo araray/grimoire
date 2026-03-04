@@ -82,6 +82,14 @@ class RitualError(GrimoireError):
     """Error parsing or evaluating a ritual."""
 
 
+class RitualParseError(RitualError):
+    """Error parsing ritual YAML file."""
+
+
+class RitualValidationError(RitualError):
+    """Ritual parsed but fails semantic validation."""
+
+
 # ── Validation ──────────────────────────────────────────────────────────────
 
 

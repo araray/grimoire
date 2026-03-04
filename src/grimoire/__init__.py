@@ -27,6 +27,8 @@ from grimoire.exceptions import (
     MissingVariableError,
     RepoError,
     RitualError,
+    RitualParseError,
+    RitualValidationError,
     RuneError,
     RuneParseError,
     RuneValidationError,
@@ -37,16 +39,24 @@ from grimoire.exceptions import (
 )
 from grimoire.models import (
     ConjuredPrompt,
+    ConjuredRitualStep,
     GrimoireManifest,
     MessageBlock,
     MessageRole,
     Promptlet,
     Provenance,
     Ritual,
+    RitualAssemblyPlan,
+    RitualStep,
+    RitualStepPlan,
     RuneSpec,
     Spell,
+    VariableSensitivity,
     VariableSpec,
+    VariableType,
 )
+from grimoire.rituals import parse_ritual, parse_ritual_file
+from grimoire.rituals.evaluator import RitualEvaluator
 from grimoire.runes.parser import parse_rune, parse_rune_file
 from grimoire.spells.parser import parse_spell, parse_spell_file
 from grimoire.store.repo import GrimoireRepo
@@ -69,6 +79,7 @@ __all__ = [
     "ConjureError",
     # Core types
     "ConjuredPrompt",
+    "ConjuredRitualStep",
     # Exceptions
     "GrimoireError",
     "GrimoireManifest",
@@ -83,7 +94,13 @@ __all__ = [
     "Provenance",
     "RepoError",
     "Ritual",
+    "RitualAssemblyPlan",
     "RitualError",
+    "RitualEvaluator",
+    "RitualParseError",
+    "RitualStep",
+    "RitualStepPlan",
+    "RitualValidationError",
     "RuneError",
     "RuneParseError",
     "RuneSpec",
@@ -94,10 +111,14 @@ __all__ = [
     "SpellParseError",
     "SpellValidationError",
     "ValidationError",
+    "VariableSensitivity",
     "VariableSpec",
+    "VariableType",
     "WairuBinder",
     # Version
     "__version__",
+    "parse_ritual",
+    "parse_ritual_file",
     "parse_rune",
     "parse_rune_file",
     # Parsers

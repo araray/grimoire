@@ -19,6 +19,8 @@ Design Principles:
 from __future__ import annotations
 
 import hashlib
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -49,6 +51,15 @@ class VariableType(str, Enum):
     BOOLEAN = "boolean"
     CHOICE = "choice"
     LIST = "list"
+    JSON = "json"  # W3: parsed JSON value (dict or list)
+    PATH = "path"  # W3: filesystem path (validated as Path-like string)
+
+
+class VariableSensitivity(str, Enum):
+    """Sensitivity classification for spell variables (W4)."""
+
+    PUBLIC = "public"
+    SECRET = "secret"
 
 
 class RiskLevel(str, Enum):
@@ -108,6 +119,9 @@ class VariableSpec(BaseModel):
     choices: list[str] | None = None  # for type=choice
     min_value: float | None = None
     max_value: float | None = None
+    # W4: sensitivity classification (public variables can appear in CLI output;
+    # secret variables should be redacted in provenance + logs)
+    sensitivity: VariableSensitivity = VariableSensitivity.PUBLIC
 
     @model_validator(mode="after")
     def _validate_constraints(self) -> "VariableSpec":
@@ -311,6 +325,8 @@ class CommandSpec(BaseModel):
     risk_level: RiskLevel | None = None
     requires_approval: bool = False
     examples: list[CommandExample] = Field(default_factory=list)
+    # W1: execution target hint for sync/export adapters
+    execution_target: str | None = None  # "local" | "sandbox" | "remote"
 
 
 class RuneSpec(BaseModel):
@@ -339,6 +355,9 @@ class RuneSpec(BaseModel):
     # Commands
     commands: list[CommandSpec] = Field(default_factory=list)
 
+    # W1: runtime mapping hints (wairu.tool_name, llmcore.activity_name, etc.)
+    mappings: dict[str, str] = Field(default_factory=dict)
+
     # Provenance
     source_path: str | None = None
     content_hash: str | None = None
@@ -364,7 +383,7 @@ class RuneSpec(BaseModel):
 
 
 # =============================================================================
-# RITUAL (stub — Phase 3 will expand)
+# RITUAL (Phase 3 — full model)
 # =============================================================================
 
 
@@ -376,15 +395,25 @@ class RitualStep(BaseModel):
     id: str
     spell: str | None = None
     when: str | None = None
+    # conjure config dict — recognised keys:
+    #   vars.inherit (bool): pass parent context variables to this step
+    #   vars.<name> (any): explicit variable overrides for this step
+    #   ask_missing (bool): prompt interactively for missing required variables
     conjure: dict[str, Any] = Field(default_factory=dict)
+    # output config dict — recognised keys:
+    #   capture (str): name of context variable to store conjured output into
+    #   format (str): "text" | "messages" (default "text")
     output: dict[str, Any] = Field(default_factory=dict)
+    description: str | None = None
 
 
 class Ritual(BaseModel):
     """
     A multi-step prompt flow composed of spells.
 
-    Phase 0 includes the data model only; evaluation is Phase 3.
+    Steps execute sequentially; ``when`` conditions gate optional steps.
+    Output from one step can be captured into a named context variable and
+    referenced in subsequent steps' ``when`` conditions.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -392,8 +421,59 @@ class Ritual(BaseModel):
     id: str
     name: str
     version: str = "1.0.0"
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
     steps: list[RitualStep] = Field(default_factory=list)
     source_path: str | None = None
+
+
+# =============================================================================
+# RITUAL ASSEMBLY PLAN (dry-run output — not a Pydantic model; dataclass)
+# =============================================================================
+
+
+@dataclass
+class RitualStepPlan:
+    """Describes what a single ritual step will do (dry-run output)."""
+
+    step_id: str
+    spell_id: str | None
+    spell_found: bool
+    condition: str | None  # raw ``when`` expression
+    inherits_vars: bool  # True if step inherits parent context variables
+    explicit_vars: dict[str, str]  # explicit var overrides declared in conjure.vars
+    ask_missing: bool  # True if step will prompt for missing vars
+    output_capture: str | None  # name of context var to capture output into
+    output_format: str  # "text" | "messages"
+    description: str | None = None
+
+
+@dataclass
+class RitualAssemblyPlan:
+    """Assembly plan for an entire ritual produced by ``RitualEvaluator.dry_run()``."""
+
+    ritual_id: str
+    ritual_name: str
+    steps: list[RitualStepPlan] = dc_field(default_factory=list)
+    missing_spells: list[str] = dc_field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        """True when all referenced spells exist in the repo."""
+        return not self.missing_spells
+
+
+@dataclass
+class ConjuredRitualStep:
+    """Output of conjuring a single ritual step during ``RitualEvaluator.evaluate()``."""
+
+    step_id: str
+    spell_id: str | None
+    skipped: bool  # True when ``when`` condition evaluated to False
+    skip_reason: str | None  # human-readable explanation for skipping
+    conjured: "ConjuredPrompt | None"  # None when skipped or no spell declared
+    captured_var: str | None  # context variable name where output was stored
+    captured_value: str | None  # the captured output text
 
 
 # =============================================================================
