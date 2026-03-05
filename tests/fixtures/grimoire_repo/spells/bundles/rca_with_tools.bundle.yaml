@@ -1,0 +1,23 @@
+id: bundles/engineering/rca_with_tools
+name: RCA with Engineering Tools
+version: 1.0.0
+description: Root cause analysis bundle with diagnostic tools and safety guardrails.
+tags: [engineering, rca, tools]
+base_template: engineering/root_cause_analysis
+overlays: []
+inject:
+  system_prepend:
+    - safety/base_engineering
+  system_append:
+    - tool_policy/low_risk
+tools:
+  diagnostic_tools:
+    - devtools/git
+    - semantiscan/query
+variants:
+  - id: anthropic_concise
+    when:
+      provider: anthropic
+    inject:
+      system_append:
+        - style/concise

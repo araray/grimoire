@@ -251,4 +251,4 @@ class WairuBinder(Binder):
         if not runes and not agentic_spells:
             result.warnings.append("No runes or agentic spells matched the filter criteria")
 
-        return result
+        return result.compute_hash()

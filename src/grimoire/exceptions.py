@@ -95,3 +95,40 @@ class RitualValidationError(RitualError):
 
 class ValidationError(GrimoireError):
     """Schema or lint validation failure."""
+
+
+# ── Bundle (Phase 4) ─────────────────────────────────────────────────────────
+
+
+class BundleError(GrimoireError):
+    """Error parsing or assembling a bundle."""
+
+
+class BundleParseError(BundleError):
+    """Error parsing bundle YAML file."""
+
+
+class BundleValidationError(BundleError):
+    """Bundle parsed but fails semantic validation."""
+
+
+class BundleAssemblyError(BundleError):
+    """Error during bundle assembly (missing spell, bad inject, etc.)."""
+
+
+# ── SkillDoc (Phase 7) ───────────────────────────────────────────────────────
+
+
+class SkillDocError(GrimoireError):
+    """Error parsing or selecting from a SkillDoc."""
+
+
+class SkillDocParseError(SkillDocError):
+    """Error parsing SkillDoc markdown/frontmatter."""
+
+
+# ── Sync (Phase 6) ───────────────────────────────────────────────────────────
+
+
+class SyncError(GrimoireError):
+    """Error during sync/drift detection operation."""

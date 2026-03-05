@@ -11,6 +11,10 @@ import sys
 import click
 
 from grimoire.cli.commands import bind, conjure, doctor, init, ritual, rune, spell
+from grimoire.cli.commands.bundle import bundle_group
+from grimoire.cli.commands.prompt import prompt_group
+from grimoire.cli.commands.skill import skill_group
+from grimoire.cli.commands.sync import sync_group
 
 logger = logging.getLogger(__name__)
 
@@ -113,3 +117,7 @@ cli.add_command(ritual.ritual_group, "ritual")
 cli.add_command(conjure.conjure_cmd, "conjure")
 cli.add_command(bind.bind_cmd, "bind")
 cli.add_command(doctor.doctor_cmd, "doctor")
+cli.add_command(bundle_group, "bundle")
+cli.add_command(skill_group, "skill")
+cli.add_command(sync_group, "sync")
+cli.add_command(prompt_group, "prompt")

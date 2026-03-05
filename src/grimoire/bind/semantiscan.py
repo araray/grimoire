@@ -264,4 +264,4 @@ class SemantiscanBinder(Binder):
                 logger.error("Bind error for %s: %s", spell.id, e, exc_info=True)
 
         result.metadata["spell_count"] = len(result.files)
-        return result
+        return result.compute_hash()

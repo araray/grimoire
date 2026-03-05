@@ -8,6 +8,7 @@ All binding targets implement the ``Binder`` abstract class, producing
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ class BindResult:
     Aggregated output of a binding operation.
 
     Contains all files produced, plus metadata for reporting.
+    ``compiled_hash`` is a SHA-256 (truncated 16 chars) of all produced
+    file contents concatenated in order — used for drift detection (spec §12).
     """
 
     target: BindTarget
@@ -62,11 +65,20 @@ class BindResult:
     files: list[BoundFile] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    compiled_hash: str | None = None
 
     @property
     def ok(self) -> bool:
         """True if files were produced without fatal errors."""
         return len(self.files) > 0
+
+    def compute_hash(self) -> "BindResult":
+        """Compute and set compiled_hash from all BoundFile contents."""
+        hasher = hashlib.sha256()
+        for bf in self.files:
+            hasher.update(bf.content.encode())
+        self.compiled_hash = hasher.hexdigest()[:16]
+        return self
 
     def write(self, out_dir: str | Path) -> list[Path]:
         """

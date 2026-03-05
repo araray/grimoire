@@ -16,9 +16,15 @@ from grimoire.bind import (
     SemantiscanBinder,
     WairuBinder,
 )
+from grimoire.bundles import parse_bundle, parse_bundle_file
+from grimoire.bundles.assembler import BundleAssembler
 from grimoire.conjure.engine import ConjureEngine
 from grimoire.exceptions import (
     ArtifactNotFoundError,
+    BundleAssemblyError,
+    BundleError,
+    BundleParseError,
+    BundleValidationError,
     CircularIncludeError,
     ConjureError,
     GrimoireError,
@@ -32,12 +38,18 @@ from grimoire.exceptions import (
     RuneError,
     RuneParseError,
     RuneValidationError,
+    SkillDocError,
+    SkillDocParseError,
     SpellError,
     SpellParseError,
     SpellValidationError,
+    SyncError,
     ValidationError,
 )
 from grimoire.models import (
+    Bundle,
+    BundleInject,
+    BundleVariant,
     ConjuredPrompt,
     ConjuredRitualStep,
     GrimoireManifest,
@@ -50,6 +62,8 @@ from grimoire.models import (
     RitualStep,
     RitualStepPlan,
     RuneSpec,
+    SkillDoc,
+    SkillDocSection,
     Spell,
     VariableSensitivity,
     VariableSpec,
@@ -58,8 +72,10 @@ from grimoire.models import (
 from grimoire.rituals import parse_ritual, parse_ritual_file
 from grimoire.rituals.evaluator import RitualEvaluator
 from grimoire.runes.parser import parse_rune, parse_rune_file
+from grimoire.skilldocs import SkillDocSelector, parse_skilldoc, parse_skilldoc_file
 from grimoire.spells.parser import parse_spell, parse_spell_file
 from grimoire.store.repo import GrimoireRepo
+from grimoire.sync import DriftReport, LLMCoreSyncer, SemantiscanSyncer, SyncResult, WairuSyncer
 
 try:
     __version__ = version("grimoire")
@@ -70,22 +86,29 @@ except PackageNotFoundError:
 
 __all__ = [
     "ArtifactNotFoundError",
-    # Bind
     "BindResult",
     "BindTarget",
     "Binder",
+    "Bundle",
+    "BundleAssembler",
+    "BundleAssemblyError",
+    "BundleError",
+    "BundleInject",
+    "BundleParseError",
+    "BundleValidationError",
+    "BundleVariant",
     "CircularIncludeError",
     "ConjureEngine",
     "ConjureError",
-    # Core types
     "ConjuredPrompt",
     "ConjuredRitualStep",
-    # Exceptions
+    "DriftReport",
     "GrimoireError",
     "GrimoireManifest",
     "GrimoireRepo",
     "IncludeError",
     "LLMCoreBinder",
+    "LLMCoreSyncer",
     "ManifestError",
     "MessageBlock",
     "MessageRole",
@@ -106,22 +129,33 @@ __all__ = [
     "RuneSpec",
     "RuneValidationError",
     "SemantiscanBinder",
+    "SemantiscanSyncer",
+    "SkillDoc",
+    "SkillDocError",
+    "SkillDocParseError",
+    "SkillDocSection",
+    "SkillDocSelector",
     "Spell",
     "SpellError",
     "SpellParseError",
     "SpellValidationError",
+    "SyncError",
+    "SyncResult",
     "ValidationError",
     "VariableSensitivity",
     "VariableSpec",
     "VariableType",
     "WairuBinder",
-    # Version
+    "WairuSyncer",
     "__version__",
+    "parse_bundle",
+    "parse_bundle_file",
     "parse_ritual",
     "parse_ritual_file",
     "parse_rune",
     "parse_rune_file",
-    # Parsers
+    "parse_skilldoc",
+    "parse_skilldoc_file",
     "parse_spell",
     "parse_spell_file",
 ]

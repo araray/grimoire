@@ -573,6 +573,151 @@ class ConjuredPrompt(BaseModel):
 # =============================================================================
 
 
+# =============================================================================
+# BUNDLE (Phase 4 — composition recipes)
+# =============================================================================
+
+
+class BundleInject(BaseModel):
+    """
+    Injection points for promptlets in a bundle composition.
+
+    Each field is a list of promptlet IDs to inject at the given position
+    within the assembled spell's message blocks.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    system_prepend: list[str] = Field(default_factory=list)  # prepend to SYSTEM block
+    system_append: list[str] = Field(default_factory=list)   # append to SYSTEM block
+    user_prepend: list[str] = Field(default_factory=list)    # prepend to USER block
+    user_append: list[str] = Field(default_factory=list)     # append to USER block
+
+
+class BundleVariant(BaseModel):
+    """
+    A named variant of a bundle for A/B testing or provider-specific tuning.
+
+    The ``when`` dict contains context keys whose values must match for this
+    variant to be selected (e.g. ``{"provider": "anthropic"}``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    when: dict[str, str] = Field(default_factory=dict)
+    inject: BundleInject | None = None
+    variable_overrides: dict[str, Any] = Field(default_factory=dict)
+
+
+class Bundle(BaseModel):
+    """
+    A prompt composition recipe.
+
+    Selects a base spell, applies profile overlays, injects promptlets at
+    specified positions, optionally exposes a set of runes, and supports
+    multiple named variants.
+
+    Content hash is computed from ``base_template + inject + variants``
+    for deterministic drift detection.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Identity
+    id: str
+    name: str
+    version: str = "1.0.0"
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+    # Composition
+    base_template: str                                     # spell ID
+    overlays: list[str] = Field(default_factory=list)     # profile names
+    inject: BundleInject | None = None
+    tools: dict[str, list[str]] = Field(default_factory=dict)  # skill_set: [rune IDs]
+    variants: list[BundleVariant] = Field(default_factory=list)
+
+    # Provenance
+    source_path: str | None = None
+    content_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _compute_hash(self) -> "Bundle":
+        """Compute content hash from base_template + inject + variants."""
+        if self.content_hash is None:
+            hasher = hashlib.sha256()
+            hasher.update(self.base_template.encode())
+            if self.inject:
+                for lst in (
+                    self.inject.system_prepend,
+                    self.inject.system_append,
+                    self.inject.user_prepend,
+                    self.inject.user_append,
+                ):
+                    for item in lst:
+                        hasher.update(item.encode())
+            for v in self.variants:
+                hasher.update(v.id.encode())
+            object.__setattr__(self, "content_hash", hasher.hexdigest()[:16])
+        return self
+
+
+# =============================================================================
+# SKILL DOC (Phase 7 — knowledge skills)
+# =============================================================================
+
+
+class SkillDocSection(BaseModel):
+    """A single section within a SkillDoc, parsed from markdown headings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    heading: str
+    content: str
+    tags: list[str] = Field(default_factory=list)
+
+
+class SkillDoc(BaseModel):
+    """
+    A knowledge skill document (``*.skilldoc.md``).
+
+    Markdown file with YAML frontmatter describing domain knowledge.
+    Sections are identified by headings and can be filtered by tags.
+    Compatible with llmcore's SkillLoader section-filtering interface.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+    version: str = "1.0.0"
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
+    sections: list[SkillDocSection] = Field(default_factory=list)
+
+    # Provenance
+    source_path: str | None = None
+    content_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _compute_hash(self) -> "SkillDoc":
+        """Compute content hash from all section content."""
+        if self.content_hash is None and self.sections:
+            hasher = hashlib.sha256()
+            for sec in self.sections:
+                hasher.update(sec.id.encode())
+                hasher.update(sec.content.encode())
+            object.__setattr__(self, "content_hash", hasher.hexdigest()[:16])
+        return self
+
+
+# =============================================================================
+# GRIMOIRE MANIFEST
+# =============================================================================
+
+
 class GrimoireManifest(BaseModel):
     """
     The grimoire.yaml manifest describing a grimoire pack/repo.
@@ -593,4 +738,6 @@ class GrimoireManifest(BaseModel):
     ritual_paths: list[str] = Field(default_factory=lambda: ["rituals/"])
     profile_paths: list[str] = Field(default_factory=lambda: ["profiles/"])
     promptlet_paths: list[str] = Field(default_factory=lambda: ["spells/promptlets/"])
+    bundle_paths: list[str] = Field(default_factory=lambda: ["spells/bundles/"])
+    skilldoc_paths: list[str] = Field(default_factory=lambda: ["skills/docs/"])
     vars_path: str = "vars/defaults.yaml"

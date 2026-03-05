@@ -151,6 +151,30 @@ def prompt_for_variable(name: str, spec: VariableSpec) -> Any:
         raw_str = click.prompt("", default="", show_default=False)
         return [item.strip() for item in raw_str.split(",") if item.strip()]
 
+    if spec.type == VariableType.JSON:
+        import json as _json
+
+        click.echo(f"{prompt_text} (JSON value):")
+        while True:
+            raw_json = click.prompt("", default="", show_default=False)
+            try:
+                return _json.loads(raw_json)
+            except _json.JSONDecodeError as exc:
+                click.secho(f"  Invalid JSON: {exc}", fg="yellow")
+
+    if spec.type == VariableType.PATH:
+        from pathlib import Path as _Path
+
+        while True:
+            raw_path = click.prompt(f"{prompt_text} (filesystem path)")
+            p = _Path(raw_path)
+            if not p.exists():
+                click.secho(f"  Path does not exist: {raw_path}", fg="yellow")
+                if click.confirm("  Use anyway?", default=False):
+                    return raw_path
+            else:
+                return str(p)
+
     # Default: string
     return click.prompt(f"{prompt_text}{type_hint}")
 

@@ -21,16 +21,19 @@ from pathlib import Path
 
 import yaml
 
+from grimoire.bundles.parser import parse_bundle_file
 from grimoire.exceptions import (
     ArtifactNotFoundError,
     ManifestError,
     RepoError,
 )
 from grimoire.models import (
+    Bundle,
     GrimoireManifest,
     Promptlet,
     Ritual,
     RuneSpec,
+    SkillDoc,
     Spell,
 )
 from grimoire.rituals.parser import parse_ritual_file
@@ -59,6 +62,8 @@ class GrimoireRepo:
         self._runes: dict[str, RuneSpec] = {}
         self._promptlets: dict[str, Promptlet] = {}
         self._rituals: dict[str, Ritual] = {}
+        self._bundles: dict[str, Bundle] = {}
+        self._skilldocs: dict[str, SkillDoc] = {}
         self._default_vars: dict[str, object] = {}
 
     # ── Factory ─────────────────────────────────────────────────────────────
@@ -88,12 +93,15 @@ class GrimoireRepo:
         repo._discover_spells()
         repo._discover_runes()
         repo._discover_rituals()
+        repo._discover_bundles()
+        repo._discover_skilldocs()
         repo._load_default_vars()
 
         logger.info(
             f"Loaded grimoire '{manifest.name}' from {root}: "
             f"{len(repo._spells)} spells, {len(repo._runes)} runes, "
-            f"{len(repo._promptlets)} promptlets, {len(repo._rituals)} rituals"
+            f"{len(repo._promptlets)} promptlets, {len(repo._rituals)} rituals, "
+            f"{len(repo._bundles)} bundles, {len(repo._skilldocs)} skilldocs"
         )
         return repo
 
@@ -193,6 +201,34 @@ class GrimoireRepo:
                 except Exception as e:
                     logger.error(f"Failed to parse ritual {ritual_file}: {e}")
 
+    def _discover_bundles(self) -> None:
+        """Find and parse all *.bundle.yaml files."""
+        dirs = self._resolve_paths(self.manifest.bundle_paths)
+        for d in dirs:
+            for bundle_file in d.rglob("*.bundle.yaml"):
+                try:
+                    bundle = parse_bundle_file(bundle_file)
+                    if bundle.id in self._bundles:
+                        logger.warning(f"Duplicate bundle id '{bundle.id}', overwriting")
+                    self._bundles[bundle.id] = bundle
+                except Exception as e:
+                    logger.error(f"Failed to parse bundle {bundle_file}: {e}")
+
+    def _discover_skilldocs(self) -> None:
+        """Find and parse all *.skilldoc.md files."""
+        from grimoire.skilldocs.parser import parse_skilldoc_file
+
+        dirs = self._resolve_paths(self.manifest.skilldoc_paths)
+        for d in dirs:
+            for sd_file in d.rglob("*.skilldoc.md"):
+                try:
+                    skilldoc = parse_skilldoc_file(sd_file)
+                    if skilldoc.id in self._skilldocs:
+                        logger.warning(f"Duplicate skilldoc id '{skilldoc.id}', overwriting")
+                    self._skilldocs[skilldoc.id] = skilldoc
+                except Exception as e:
+                    logger.error(f"Failed to parse skilldoc {sd_file}: {e}")
+
     def _load_default_vars(self) -> None:
         """Load default variables from vars/defaults.yaml."""
         vars_path = self.root / self.manifest.vars_path
@@ -230,6 +266,18 @@ class GrimoireRepo:
             raise ArtifactNotFoundError(f"Ritual not found: {ritual_id}")
         return self._rituals[ritual_id]
 
+    def get_bundle(self, bundle_id: str) -> Bundle:
+        """Get a bundle by ID. Raises ArtifactNotFoundError if missing."""
+        if bundle_id not in self._bundles:
+            raise ArtifactNotFoundError(f"Bundle not found: {bundle_id}")
+        return self._bundles[bundle_id]
+
+    def get_skilldoc(self, skilldoc_id: str) -> SkillDoc:
+        """Get a SkillDoc by ID. Raises ArtifactNotFoundError if missing."""
+        if skilldoc_id not in self._skilldocs:
+            raise ArtifactNotFoundError(f"SkillDoc not found: {skilldoc_id}")
+        return self._skilldocs[skilldoc_id]
+
     @property
     def default_vars(self) -> dict[str, object]:
         """Default variable values from vars/defaults.yaml."""
@@ -265,6 +313,22 @@ class GrimoireRepo:
             rituals = [r for r in rituals if tag_set.issubset(set(r.tags))]
         return sorted(rituals, key=lambda r: r.id)
 
+    def list_bundles(self, tags: list[str] | None = None) -> list[Bundle]:
+        """List all bundles, optionally filtered by tags (AND logic)."""
+        bundles = list(self._bundles.values())
+        if tags:
+            tag_set = set(tags)
+            bundles = [b for b in bundles if tag_set.issubset(set(b.tags))]
+        return sorted(bundles, key=lambda b: b.id)
+
+    def list_skilldocs(self, tags: list[str] | None = None) -> list[SkillDoc]:
+        """List all SkillDocs, optionally filtered by tags (AND logic)."""
+        docs = list(self._skilldocs.values())
+        if tags:
+            tag_set = set(tags)
+            docs = [d for d in docs if tag_set.issubset(set(d.tags))]
+        return sorted(docs, key=lambda d: d.id)
+
     # ── Catalog (agent-friendly) ────────────────────────────────────────────
 
     def catalog(self) -> dict:
@@ -296,4 +360,69 @@ class GrimoireRepo:
             "rituals": [
                 {"id": r.id, "name": r.name, "steps": len(r.steps)} for r in self.list_rituals()
             ],
+            "bundles": [
+                {"id": b.id, "name": b.name, "version": b.version, "tags": b.tags}
+                for b in self.list_bundles()
+            ],
+            "skilldocs": [
+                {"id": d.id, "name": d.name, "tags": d.tags, "sections": len(d.sections)}
+                for d in self.list_skilldocs()
+            ],
         }
+
+    # ── Facade accessors (spec §11) ─────────────────────────────────────────
+
+    @property
+    def prompts(self) -> "_PromptAccessor":
+        """Facade for prompt operations (spec §11 ``repo.prompts.*``)."""
+        return _PromptAccessor(self)
+
+    @property
+    def skills(self) -> "_SkillAccessor":
+        """Facade for skill operations (spec §11 ``repo.skills.*``)."""
+        return _SkillAccessor(self)
+
+
+# ── Facade classes (spec §11) ────────────────────────────────────────────────
+
+
+class _PromptAccessor:
+    """Thin facade over GrimoireRepo for prompt operations."""
+
+    def __init__(self, repo: GrimoireRepo) -> None:
+        self._repo = repo
+
+    def list(self, tags: list[str] | None = None) -> list[Spell]:
+        """List spells with optional tag filtering."""
+        return self._repo.list_spells(tags=tags)
+
+    def get(self, spell_id: str) -> Spell:
+        """Retrieve a spell by ID."""
+        return self._repo.get_spell(spell_id)
+
+    def bundles(self, tags: list[str] | None = None) -> list[Bundle]:
+        """List bundles with optional tag filtering."""
+        return self._repo.list_bundles(tags=tags)
+
+
+class _SkillAccessor:
+    """Thin facade over GrimoireRepo for skill operations."""
+
+    def __init__(self, repo: GrimoireRepo) -> None:
+        self._repo = repo
+
+    def contracts(self, tags: list[str] | None = None) -> list[RuneSpec]:
+        """List rune contracts with optional tag filtering."""
+        return self._repo.list_runes(tags=tags)
+
+    def docs(self, tags: list[str] | None = None) -> list[SkillDoc]:
+        """List SkillDocs with optional tag filtering."""
+        return self._repo.list_skilldocs(tags=tags)
+
+    def get_contract(self, rune_id: str) -> RuneSpec:
+        """Retrieve a rune contract by ID."""
+        return self._repo.get_rune(rune_id)
+
+    def get_doc(self, skilldoc_id: str) -> SkillDoc:
+        """Retrieve a SkillDoc by ID."""
+        return self._repo.get_skilldoc(skilldoc_id)

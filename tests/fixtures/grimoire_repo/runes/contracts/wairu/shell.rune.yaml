@@ -1,0 +1,36 @@
+id: wairu/shell
+name: Wairu Shell Executor
+version: 1.0.0
+description: Execute shell commands via wairu's sandboxed executor.
+tags: [wairu, shell, exec]
+risk_level: high
+permissions: [exec, write_fs, read_fs]
+requires_approval: true
+commands:
+  - name: run
+    summary: Execute a shell command in the wairu execution environment.
+    risk_level: high
+    requires_approval: true
+    params:
+      - name: command
+        type: string
+        required: true
+        description: Shell command to execute
+      - name: working_dir
+        type: string
+        required: false
+        description: Working directory for the command
+      - name: timeout_seconds
+        type: integer
+        required: false
+        default: 30
+        description: Execution timeout
+    returns:
+      type: object
+      properties:
+        stdout: {type: string}
+        stderr: {type: string}
+        exit_code: {type: integer}
+    execution_target: sandbox
+mappings:
+  wairu.tool_name: shell

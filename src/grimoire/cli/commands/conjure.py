@@ -61,13 +61,22 @@ def conjure_cmd(
     repo = load_repo(ctx)
     output_format: str = ctx.obj["output_format"]
 
-    # Load spell
+    # Load spell (or assemble a bundle transparently)
     try:
         spell = repo.get_spell(spell_id)
-    except Exception as e:
-        click.secho(str(e), fg="red", err=True)
-        ctx.exit(1)
-        return
+    except Exception:
+        # Try as a bundle ID
+        try:
+            from grimoire.bundles.assembler import BundleAssembler
+            bundle = repo.get_bundle(spell_id)
+            assembler = BundleAssembler(repo)
+            spell = assembler.assemble(bundle)
+        except Exception as e:
+            click.secho(
+                f"'{spell_id}' not found as spell or bundle: {e}", fg="red", err=True
+            )
+            ctx.exit(1)
+            return
 
     # Build variable map with precedence: profiles < file vars < explicit vars
     profile_vars = load_profiles(repo, ctx.obj["profiles"])

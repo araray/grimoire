@@ -39,6 +39,7 @@ from grimoire.models import (
     Provenance,
     RuneSpec,
     Spell,
+    VariableSensitivity,
 )
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,14 @@ class ConjureEngine:
             spell_id=spell.id,
             spell_hash=spell.content_hash,
             variables_used={
-                k: str(v) for k, v in effective_vars.items() if not k.startswith("grimoire.")
+                k: (
+                    "[redacted]"
+                    if spell.variables.get(k) is not None
+                    and spell.variables[k].sensitivity == VariableSensitivity.SECRET
+                    else str(v)
+                )
+                for k, v in effective_vars.items()
+                if not k.startswith("grimoire.")
             },
             includes_resolved=includes_resolved,
             runes_referenced=runes_referenced,

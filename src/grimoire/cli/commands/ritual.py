@@ -238,3 +238,141 @@ def ritual_dry_run(ctx: click.Context, ritual_id: str, as_json: bool, do_validat
             click.echo(f"      capture: {sp.output_capture!r} (format={sp.output_format})")
 
     click.echo()
+
+
+# ── ritual run ─────────────────────────────────────────────────────────────────
+
+
+@ritual_group.command("run")
+@click.argument("ritual_id")
+@click.option("--ask-missing", is_flag=True, help="Interactively prompt for missing variables.")
+@click.option("--no-validate", is_flag=True, help="Skip pre-run validation.")
+@click.option("--json", "as_json", is_flag=True, help="Output step results as JSON.")
+@click.option("--format", "output_format", default="text", help="Output format per step (text/openai/anthropic).")
+@click.pass_context
+def ritual_run(
+    ctx: click.Context,
+    ritual_id: str,
+    ask_missing: bool,
+    no_validate: bool,
+    as_json: bool,
+    output_format: str,
+) -> None:
+    """
+    Execute a ritual: conjure each step in sequence.
+
+    Steps are executed sequentially; ``when`` conditions gate optional steps.
+    Output from each step is printed and can flow into subsequent steps via
+    context variable capture.
+
+    Variable resolution per step:
+      1. --set key=value (from global CLI)
+      2. --vars file(s) (from global CLI)
+      3. --profile overlay(s) (from global CLI)
+      4. grimoire defaults (vars/defaults.yaml)
+      5. Spell defaults
+      6. Built-ins (grimoire.now.*, etc.)
+    """
+    from grimoire.cli.helpers import load_profiles, load_vars_from_files
+
+    repo = load_repo(ctx)
+
+    try:
+        ritual = repo.get_ritual(ritual_id)
+    except ArtifactNotFoundError as e:
+        click.secho(str(e), fg="red", err=True)
+        ctx.exit(1)
+        return
+
+    # Optional pre-run validation
+    if not no_validate:
+        issues = validate_ritual(ritual, repo=repo)
+        errors = [d for d in issues if d.severity == Severity.ERROR]
+        if errors:
+            click.secho("\n  Pre-run validation failed:", fg="red", err=True)
+            for d in errors:
+                click.secho(f"    ✗ {d.message}", fg="red", err=True)
+            ctx.exit(1)
+            return
+
+    # Build base variables from CLI context
+    profile_vars = load_profiles(repo, ctx.obj["profiles"])
+    vars_from_files = load_vars_from_files(ctx.obj["vars_files"])
+    explicit_vars: dict = ctx.obj["explicit_vars"]
+
+    base_vars: dict = {}
+    base_vars.update(profile_vars)
+    base_vars.update(vars_from_files)
+    base_vars.update(explicit_vars)
+
+    evaluator = RitualEvaluator(repo)
+
+    # Inject ask_missing option into evaluator context
+    ctx_vars: dict = dict(base_vars)
+
+    # Execute
+    try:
+        steps = evaluator.evaluate(ritual, variables=ctx_vars)
+    except RitualError as e:
+        click.secho(f"\n  Ritual execution failed: {e}", fg="red", err=True)
+        ctx.exit(1)
+        return
+
+    if as_json:
+        output = []
+        for step in steps:
+            entry: dict = {
+                "step_id": step.step_id,
+                "spell_id": step.spell_id,
+                "skipped": step.skipped,
+                "skip_reason": step.skip_reason,
+                "captured_var": step.captured_var,
+            }
+            if step.conjured:
+                if output_format == "text":
+                    entry["output"] = step.conjured.to_text()
+                else:
+                    entry["output"] = step.conjured.to_messages(output_format)
+            output.append(entry)
+        click.echo(json.dumps(output, indent=2))
+        return
+
+    # Human-readable step-by-step output
+    click.echo(f"\n  Running ritual: {ritual.name} [{ritual.id}]\n")
+    click.echo(f"  {'─' * 60}")
+
+    any_failure = False
+    for step in steps:
+        if step.skipped:
+            reason = step.skip_reason or "when condition evaluated to False"
+            click.secho(f"\n  ⊘ [{step.step_id}] SKIPPED — {reason}", fg="yellow")
+            continue
+
+        click.secho(f"\n  ▶ [{step.step_id}]", fg="blue", bold=True)
+
+        if step.spell_id:
+            click.echo(f"    spell: {step.spell_id}")
+
+        if step.conjured is None:
+            click.echo("    (no-op step — no spell declared)")
+            continue
+
+        click.echo()
+        if output_format == "text":
+            click.echo(step.conjured.to_text())
+        else:
+            messages = step.conjured.to_messages(output_format)
+            click.echo(json.dumps(messages, indent=2))
+
+        if step.captured_var:
+            click.secho(
+                f"\n    → captured into '{step.captured_var}'",
+                fg="cyan",
+            )
+
+        click.echo(f"  {'─' * 60}")
+
+    if any_failure:
+        ctx.exit(1)
+    else:
+        click.secho(f"\n  ✓ Ritual complete ({len(steps)} steps)", fg="green")

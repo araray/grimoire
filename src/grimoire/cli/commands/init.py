@@ -15,10 +15,13 @@ _SKELETON_DIRS = [
     "spells/promptlets/tool_policy",
     "spells/templates/engineering",
     "spells/templates/agentic",
+    "spells/templates/semantiscan",
     "spells/bundles",
+    "spells/graphs",
     "rituals",
     "runes/contracts",
     "runes/docs",
+    "skills/docs",
     "profiles/user",
     "profiles/persona",
     "profiles/projects",
@@ -40,6 +43,8 @@ _DEFAULT_MANIFEST = {
     "ritual_paths": ["rituals/"],
     "profile_paths": ["profiles/"],
     "promptlet_paths": ["spells/promptlets/"],
+    "bundle_paths": ["spells/bundles/"],
+    "skilldoc_paths": ["skills/docs/"],
     "vars_path": "vars/defaults.yaml",
 }
 

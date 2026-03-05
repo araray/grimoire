@@ -299,4 +299,4 @@ class LLMCoreBinder(Binder):
 
         result.metadata["prompt_count"] = len(prompt_entries)
         result.metadata["activity_count"] = len(activity_entries)
-        return result
+        return result.compute_hash()
