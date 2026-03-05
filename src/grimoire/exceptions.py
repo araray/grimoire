@@ -26,6 +26,10 @@ class ArtifactNotFoundError(RepoError):
     """A referenced spell, rune, ritual, or promptlet was not found."""
 
 
+class AmbiguousArtifactError(RepoError):
+    """An artifact ID matches multiple artifact types."""
+
+
 # ── Spell parsing ───────────────────────────────────────────────────────────
 
 

@@ -5,7 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — Phase 3 + Quick Wins
+## [Unreleased] — Phase 3 + Quick Wins + Live-Bind API
+
+### Added — Live-Bind API (spec §10.2, §12)
+
+**Grimoire Facade** (`api.py`)
+- `Grimoire(repo_path, strict=)` — single-entry-point facade for programmatic access
+- `reload()` — re-load repo from disk after file changes
+- **Polymorphic conjure**: `conjure(artifact_id, variables=, defaults=, context=, strict=)`
+  auto-detects spell / bundle / ritual and returns the correct type
+- **Typed conjure**: `conjure_spell()`, `conjure_bundle()`, `conjure_ritual()` for
+  statically-typed callers
+- **Variable introspection**: `spell_vars(spell_id)` returns full variable schema;
+  `missing_vars(artifact_id, provided=)` identifies required variables not yet supplied
+- **Tool schema generation**: `tool_schemas(rune_ids=, tags=, schema_format=)` produces
+  OpenAI-compatible function-calling tool definitions from runes
+- **In-memory bind**: `bind(target, fmt=, spell_ids=, rune_ids=, tags=)` produces
+  `BindResult` without disk writes (live-bind mode)
+- **Validation**: `validate()` for repo-level checks; `lint(spell_id=, config=)` for
+  style rules on individual or all spells
+- **Catalog**: `catalog()` returns agent-friendly JSON of all artifacts
+- Convenience accessors: `get_spell`, `get_rune`, `get_bundle`, `get_ritual`,
+  `list_spells`, `list_runes`, `list_bundles`, `list_rituals`
+
+**New exception** (`exceptions.py`)
+- `AmbiguousArtifactError(RepoError)` — artifact ID matches multiple types
+
+**Tests**
+- 74 new tests: `test_api.py` covering construction, conjure (polymorphic + typed),
+  variable introspection, tool schemas, in-memory bind, validation, lint, catalog,
+  accessors, error paths, and end-to-end live-bind workflows
+- Total: 544 tests passing (was 470); coverage 87% (was 85.13%)
 
 ### Added — Phase 3: Rituals
 

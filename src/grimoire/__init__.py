@@ -8,6 +8,7 @@ Manage spells (prompt templates), runes (skill contracts), and rituals
 
 from importlib.metadata import PackageNotFoundError, version
 
+from grimoire.api import Grimoire
 from grimoire.bind import (
     Binder,
     BindResult,
@@ -20,6 +21,7 @@ from grimoire.bundles import parse_bundle, parse_bundle_file
 from grimoire.bundles.assembler import BundleAssembler
 from grimoire.conjure.engine import ConjureEngine
 from grimoire.exceptions import (
+    AmbiguousArtifactError,
     ArtifactNotFoundError,
     BundleAssemblyError,
     BundleError,
@@ -85,6 +87,7 @@ except PackageNotFoundError:
     __version__ = _get_version_from_pyproject()
 
 __all__ = [
+    "AmbiguousArtifactError",
     "ArtifactNotFoundError",
     "BindResult",
     "BindTarget",
@@ -103,6 +106,7 @@ __all__ = [
     "ConjuredPrompt",
     "ConjuredRitualStep",
     "DriftReport",
+    "Grimoire",
     "GrimoireError",
     "GrimoireManifest",
     "GrimoireRepo",
