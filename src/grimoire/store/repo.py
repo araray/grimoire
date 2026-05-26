@@ -17,6 +17,8 @@ suitable for CLI listing and agent introspection.
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -38,9 +40,36 @@ from grimoire.models import (
 )
 from grimoire.rituals.parser import parse_ritual_file
 from grimoire.runes.parser import parse_rune_file
-from grimoire.spells.parser import parse_spell_file
+from grimoire.spells.parser import parse_spell_file, serialize_spell
 
 logger = logging.getLogger(__name__)
+
+
+def _tag_match(item_tags: set[str], wanted: set[str], match: str) -> bool:
+    """
+    Evaluate a tag filter against an item's tag set.
+
+    Args:
+        item_tags: The artifact's tags (as a set).
+        wanted: The requested tags (as a set).
+        match: ``"all"`` (AND — every requested tag must be present) or
+               ``"any"`` (OR — at least one requested tag present).
+
+    Returns:
+        ``True`` if the item satisfies the filter.
+    """
+    if not wanted:
+        return True
+    if match == "any":
+        return bool(item_tags & wanted)
+    # default / "all"
+    return wanted.issubset(item_tags)
+
+
+def _validate_match(match: str) -> None:
+    """Raise ``ValueError`` if ``match`` is not a recognized mode."""
+    if match not in ("all", "any"):
+        raise ValueError(f"Invalid tag match mode {match!r} (expected 'all' or 'any')")
 
 
 class GrimoireRepo:
@@ -54,9 +83,13 @@ class GrimoireRepo:
         runes = repo.list_runes(tags=["devtools"])
     """
 
-    def __init__(self, root: Path, manifest: GrimoireManifest) -> None:
+    def __init__(self, root: Path, manifest: GrimoireManifest, *, writable: bool = True) -> None:
         self.root = root
         self.manifest = manifest
+        # Whether write operations (write/update/delete spell) are permitted on
+        # this repo. Standalone repos default to writable; the layered overlay
+        # system (LayeredGrimoire) marks shipped layers read-only.
+        self.writable = writable
 
         self._spells: dict[str, Spell] = {}
         self._runes: dict[str, RuneSpec] = {}
@@ -69,12 +102,14 @@ class GrimoireRepo:
     # ── Factory ─────────────────────────────────────────────────────────────
 
     @classmethod
-    def load(cls, path: str | Path) -> "GrimoireRepo":
+    def load(cls, path: str | Path, *, writable: bool = True) -> "GrimoireRepo":
         """
         Load a grimoire repo from disk.
 
         Args:
             path: Path to the grimoire root directory.
+            writable: If ``False``, the repo rejects write/update/delete
+                operations (used for shipped/read-only overlay layers).
 
         Returns:
             Populated GrimoireRepo instance.
@@ -87,7 +122,7 @@ class GrimoireRepo:
             raise RepoError(f"Not a directory: {root}")
 
         manifest = cls._load_manifest(root)
-        repo = cls(root, manifest)
+        repo = cls(root, manifest, writable=writable)
 
         repo._discover_promptlets()
         repo._discover_spells()
@@ -285,49 +320,230 @@ class GrimoireRepo:
 
     # ── Listing / Filtering ─────────────────────────────────────────────────
 
-    def list_spells(self, tags: list[str] | None = None) -> list[Spell]:
-        """List all spells, optionally filtered by tags (AND logic)."""
+    def list_spells(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Spell]:
+        """
+        List all spells, optionally filtered by tags.
+
+        Args:
+            tags: Tags to filter by. ``None``/empty returns all spells.
+            match: ``"all"`` (AND, default) or ``"any"`` (OR).
+        """
+        _validate_match(match)
         spells = list(self._spells.values())
         if tags:
-            tag_set = set(tags)
-            spells = [s for s in spells if tag_set.issubset(set(s.tags))]
+            wanted = set(tags)
+            spells = [s for s in spells if _tag_match(set(s.tags), wanted, match)]
         return sorted(spells, key=lambda s: s.id)
 
-    def list_runes(self, tags: list[str] | None = None) -> list[RuneSpec]:
-        """List all runes, optionally filtered by tags (AND logic)."""
+    def list_runes(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[RuneSpec]:
+        """List all runes, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
         runes = list(self._runes.values())
         if tags:
-            tag_set = set(tags)
-            runes = [r for r in runes if tag_set.issubset(set(r.tags))]
+            wanted = set(tags)
+            runes = [r for r in runes if _tag_match(set(r.tags), wanted, match)]
         return sorted(runes, key=lambda r: r.id)
 
     def list_promptlets(self) -> list[Promptlet]:
         """List all promptlets."""
         return sorted(self._promptlets.values(), key=lambda p: p.id)
 
-    def list_rituals(self, tags: list[str] | None = None) -> list[Ritual]:
-        """List all rituals, optionally filtered by tags (AND logic)."""
+    def list_rituals(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Ritual]:
+        """List all rituals, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
         rituals = list(self._rituals.values())
         if tags:
-            tag_set = set(tags)
-            rituals = [r for r in rituals if tag_set.issubset(set(r.tags))]
+            wanted = set(tags)
+            rituals = [r for r in rituals if _tag_match(set(r.tags), wanted, match)]
         return sorted(rituals, key=lambda r: r.id)
 
-    def list_bundles(self, tags: list[str] | None = None) -> list[Bundle]:
-        """List all bundles, optionally filtered by tags (AND logic)."""
+    def list_bundles(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Bundle]:
+        """List all bundles, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
         bundles = list(self._bundles.values())
         if tags:
-            tag_set = set(tags)
-            bundles = [b for b in bundles if tag_set.issubset(set(b.tags))]
+            wanted = set(tags)
+            bundles = [b for b in bundles if _tag_match(set(b.tags), wanted, match)]
         return sorted(bundles, key=lambda b: b.id)
 
-    def list_skilldocs(self, tags: list[str] | None = None) -> list[SkillDoc]:
-        """List all SkillDocs, optionally filtered by tags (AND logic)."""
+    def list_skilldocs(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[SkillDoc]:
+        """List all SkillDocs, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
         docs = list(self._skilldocs.values())
         if tags:
-            tag_set = set(tags)
-            docs = [d for d in docs if tag_set.issubset(set(d.tags))]
+            wanted = set(tags)
+            docs = [d for d in docs if _tag_match(set(d.tags), wanted, match)]
         return sorted(docs, key=lambda d: d.id)
+
+    # ── Tag vocabulary & text search (WS-G3) ────────────────────────────────
+
+    def list_tags(self, prefix: str | None = None) -> dict[str, int]:
+        """
+        Return the distinct spell-tag vocabulary with usage counts.
+
+        Counts the number of spells carrying each tag. Intended to power tag
+        chip-bars and to bias wizard tag suggestions toward the existing
+        vocabulary (Convergence WS-D).
+
+        Args:
+            prefix: If given, only tags starting with this (case-insensitive)
+                prefix are returned.
+
+        Returns:
+            Mapping ``{tag: count}`` ordered by descending count then tag name.
+        """
+        counts: dict[str, int] = {}
+        for spell in self._spells.values():
+            for tag in spell.tags:
+                counts[tag] = counts.get(tag, 0) + 1
+        if prefix:
+            pre = prefix.lower()
+            counts = {t: c for t, c in counts.items() if t.lower().startswith(pre)}
+        return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+    def search_spells(
+        self,
+        query: str,
+        *,
+        fields: tuple[str, ...] = ("name", "description", "tags"),
+    ) -> list[Spell]:
+        """
+        Case-insensitive substring search over spells.
+
+        Args:
+            query: Substring to match. Empty/blank query returns all spells.
+            fields: Which spell fields to search. Supported:
+                ``name``, ``description``, ``tags``, ``id``.
+
+        Returns:
+            Matching spells sorted by ``id``.
+        """
+        q = (query or "").strip().lower()
+        if not q:
+            return self.list_spells()
+
+        def _hit(spell: Spell) -> bool:
+            for f in fields:
+                if f == "name" and q in (spell.name or "").lower():
+                    return True
+                if f == "description" and q in (spell.description or "").lower():
+                    return True
+                if f == "id" and q in spell.id.lower():
+                    return True
+                if f == "tags" and any(q in t.lower() for t in spell.tags):
+                    return True
+            return False
+
+        return sorted((s for s in self._spells.values() if _hit(s)), key=lambda s: s.id)
+
+    # ── Write API (WS-G1) ────────────────────────────────────────────────────
+
+    def _spell_path(self, spell_id: str) -> Path:
+        """Compute the on-disk path for a spell id within this repo's primary spell dir."""
+        spell_dir = self.manifest.spell_paths[0] if self.manifest.spell_paths else "spells/"
+        return self.root / spell_dir / f"{spell_id}.spell.md"
+
+    def _ensure_writable(self) -> None:
+        if not self.writable:
+            raise RepoError(f"Grimoire repo at {self.root} is read-only; refusing to write")
+
+    def write_spell(self, spell: Spell, *, overwrite: bool = False) -> Path:
+        """
+        Serialize and write a spell to disk, then hot-insert it into the index.
+
+        The file is placed at ``<root>/<spell_paths[0]>/<spell.id>.spell.md`` and
+        written atomically (temp file + ``os.replace``). After writing, the spell
+        is re-parsed from disk so ``source_path``/``content_hash`` reflect the
+        persisted form and the in-memory index stays consistent.
+
+        Args:
+            spell: The spell to persist (validated by the ``Spell`` model).
+            overwrite: If ``False`` (default) and the target file already exists,
+                a :class:`RepoError` is raised. ``update_spell`` passes ``True``.
+
+        Returns:
+            The path the spell was written to.
+
+        Raises:
+            RepoError: If the repo is read-only or the file exists and
+                ``overwrite`` is ``False``.
+        """
+        self._ensure_writable()
+        target = self._spell_path(spell.id)
+        if target.exists() and not overwrite:
+            raise RepoError(
+                f"Spell file already exists: {target} (use overwrite=True / update_spell)"
+            )
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        text = serialize_spell(spell)
+
+        # Atomic write: temp file in the same directory, then os.replace.
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(target.parent), prefix=".grimoire-", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(tmp_name, target)
+        except Exception:
+            # Best-effort cleanup of the temp file on failure.
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                pass
+            raise
+
+        # Re-parse from disk to capture source_path + recomputed hash, then index.
+        parsed = parse_spell_file(target)
+        self._spells[parsed.id] = parsed
+        logger.info("Wrote spell '%s' -> %s", spell.id, target)
+        return target
+
+    def update_spell(self, spell: Spell) -> Path:
+        """Write a spell, overwriting any existing file with the same id."""
+        return self.write_spell(spell, overwrite=True)
+
+    def delete_spell(self, spell_id: str, *, missing_ok: bool = False) -> bool:
+        """
+        Delete a spell file and drop it from the index.
+
+        Args:
+            spell_id: The spell id to delete.
+            missing_ok: If ``True``, return ``False`` instead of raising when the
+                spell is not present.
+
+        Returns:
+            ``True`` if a spell was deleted, ``False`` if missing and ``missing_ok``.
+
+        Raises:
+            RepoError: If the repo is read-only.
+            ArtifactNotFoundError: If the spell is absent and ``missing_ok`` is False.
+        """
+        self._ensure_writable()
+        spell = self._spells.get(spell_id)
+        if spell is None:
+            if missing_ok:
+                return False
+            raise ArtifactNotFoundError(f"Spell not found: {spell_id}")
+
+        # Prefer the recorded source_path; fall back to the canonical location.
+        path = Path(spell.source_path) if spell.source_path else self._spell_path(spell_id)
+        if path.exists():
+            path.unlink()
+        self._spells.pop(spell_id, None)
+        logger.info("Deleted spell '%s' (%s)", spell_id, path)
+        return True
 
     # ── Catalog (agent-friendly) ────────────────────────────────────────────
 

@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -65,6 +66,7 @@ _KNOWN_FM_KEYS = frozenset(
         "tags",
         "description",
         "license",
+        "attributes",
         "variables",
         "requires_runes",
         "suggests_runes",
@@ -238,6 +240,15 @@ def parse_spell(text: str, source_path: str | None = None) -> Spell:
     # Parse message blocks
     blocks = _parse_blocks(body)
 
+    # Parse opaque application attributes (WS-G4). Must be a mapping if present.
+    attributes = fm.get("attributes")
+    if attributes is None:
+        attributes = {}
+    elif not isinstance(attributes, dict):
+        raise SpellValidationError(
+            f"Spell 'attributes' must be a mapping, got {type(attributes).__name__}"
+        )
+
     try:
         return Spell(
             id=spell_id,
@@ -246,6 +257,7 @@ def parse_spell(text: str, source_path: str | None = None) -> Spell:
             tags=fm.get("tags", []),
             description=fm.get("description"),
             license=fm.get("license"),
+            attributes=attributes,
             variables=variables,
             requires_runes=fm.get("requires_runes", []),
             suggests_runes=fm.get("suggests_runes", []),
@@ -276,3 +288,91 @@ def parse_spell_file(path: str | Path) -> Spell:
 
     text = p.read_text(encoding="utf-8")
     return parse_spell(text, source_path=str(p))
+
+
+# Canonical ordering of scalar/structured front-matter keys for serialization.
+# Mirrors the documented spell format and keeps ``attributes`` adjacent to the
+# other metadata fields (WS-G1/WS-G4).
+_FM_ORDER = (
+    "id",
+    "name",
+    "version",
+    "tags",
+    "attributes",
+    "description",
+    "license",
+    "variables",
+    "requires_runes",
+    "suggests_runes",
+    "runes_export",
+    "output_contract",
+)
+
+
+def serialize_spell(spell: Spell) -> str:
+    """
+    Serialize a :class:`~grimoire.models.Spell` back to canonical ``.spell.md`` text.
+
+    The output is the round-trip inverse of :func:`parse_spell`: feeding the
+    result back through ``parse_spell`` reconstructs an equivalent spell (modulo
+    ``source_path`` and the recomputed ``content_hash``, which are provenance,
+    not content).
+
+    Emission rules:
+        - Front-matter keys are emitted in :data:`_FM_ORDER`; empty/default
+          collections (``tags``, ``attributes``, ``variables``,
+          ``requires_runes``, ``suggests_runes``) and ``None`` scalars are
+          omitted to keep files minimal and stable.
+        - ``variables`` are dumped with ``exclude_defaults=True`` so only
+          author-specified fields persist (defaults are re-applied on parse).
+        - Message blocks are emitted in order as ``# ROLE`` sections.
+
+    Args:
+        spell: The spell model to serialize.
+
+    Returns:
+        The full ``.spell.md`` file text (front-matter + body), newline-terminated.
+    """
+    fm: dict[str, Any] = {}
+    fm["id"] = spell.id
+    fm["name"] = spell.name
+    fm["version"] = spell.version
+    if spell.tags:
+        fm["tags"] = list(spell.tags)
+    if spell.attributes:
+        fm["attributes"] = spell.attributes
+    if spell.description is not None:
+        fm["description"] = spell.description
+    if spell.license is not None:
+        fm["license"] = spell.license
+    if spell.variables:
+        fm["variables"] = {
+            name: spec.model_dump(mode="json", exclude_defaults=True)
+            for name, spec in spell.variables.items()
+        }
+    if spell.requires_runes:
+        fm["requires_runes"] = list(spell.requires_runes)
+    if spell.suggests_runes:
+        fm["suggests_runes"] = list(spell.suggests_runes)
+    if spell.runes_export is not None:
+        fm["runes_export"] = spell.runes_export.model_dump(mode="json", exclude_none=True)
+    if spell.output_contract is not None:
+        fm["output_contract"] = spell.output_contract.model_dump(mode="json", exclude_none=True)
+
+    # Emit in canonical order (yaml.safe_dump with sort_keys=False preserves it).
+    ordered = {k: fm[k] for k in _FM_ORDER if k in fm}
+    fm_text = yaml.safe_dump(
+        ordered,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+    ).rstrip("\n")
+
+    parts = ["---", fm_text, "---", ""]
+    for block in spell.raw_blocks:
+        parts.append(f"# {block.role.value}")
+        parts.append(block.content.rstrip("\n"))
+        parts.append("")  # blank line between blocks
+
+    # Ensure a single trailing newline.
+    return "\n".join(parts).rstrip("\n") + "\n"

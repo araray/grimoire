@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — Attributes, Tag Search, Spell Write API, Layered Overlays
+
+This release adds the grimoire-side foundation for the Convergence **v0.8.0**
+"grimoire-canonical personas & modes" workstream (WS-G). It is additive and
+backward-compatible: the existing 544-test suite remains green; 49 tests were
+added (593 total).
+
+### Added — Opaque application metadata (WS-G4)
+- `Spell.attributes: dict[str, Any]` — a declared, opaque mapping that grimoire
+  stores and serves verbatim but never interprets. Lets downstream apps (e.g.
+  Convergence personas/modes) attach structured data (`color`, `constraints`,
+  mode flags) without grimoire growing app-specific fields. The model remains
+  `extra="forbid"`. `attributes` is intentionally **excluded from
+  `content_hash`** (it is metadata, not prompt body, so editing it does not
+  register as prompt drift).
+- Spell parser reads an `attributes:` front-matter mapping and rejects
+  non-mapping values with `SpellValidationError`.
+
+### Added — Tag vocabulary & text search (WS-G3)
+- `match="all"|"any"` (keyword-only, default `"all"`) on `GrimoireRepo` and
+  `Grimoire` `list_spells/list_runes/list_rituals/list_bundles/list_skilldocs`,
+  adding OR semantics alongside the existing AND. Invalid modes raise
+  `ValueError`.
+- `list_tags(prefix=None) -> dict[str, int]` — distinct spell-tag vocabulary
+  with usage counts, ordered by descending count then name; optional
+  case-insensitive prefix filter.
+- `search_spells(query, fields=("name","description","tags")) -> list[Spell]` —
+  case-insensitive substring search (also supports `"id"`).
+
+### Added — Spell write API + serializer (WS-G1)
+- `serialize_spell(spell) -> str` — canonical `.spell.md` serializer; exact
+  round-trip inverse of `parse_spell` (stable `content_hash`).
+- `GrimoireRepo.write_spell(spell, overwrite=False)` — atomic write
+  (temp file + `os.replace`) into the repo's primary spell dir, then hot-index
+  (re-parsed from disk for correct `source_path`/hash). Refuses to clobber
+  without `overwrite`, and refuses writes on read-only repos.
+- `GrimoireRepo.update_spell(spell)` / `delete_spell(id, missing_ok=False)`.
+- `GrimoireRepo.load(path, writable=True)` and a `GrimoireRepo.writable` flag.
+- Facade equivalents on `Grimoire`: `write_spell`, `update_spell`, `delete_spell`.
+- CLI: `grimoire spell new|edit|rm` verbs.
+
+### Added — Layered overlays (WS-G2)
+- New module `grimoire.layered` with `LayeredGrimoire` and `GrimoireLayer`.
+  Composes ordered repos (lowest → highest precedence; by Convergence
+  convention `shipped(ro) < admin(rw) < user(rw)`). Reads resolve highest-first;
+  writes target a named writable layer (or the highest writable by default);
+  deleting an overlay un-shadows lower layers. Includes
+  `from_roots(...)` (with on-demand scaffolding of writable layer roots),
+  `resolve_layer(id)`, merged `list_spells/list_tags/search_spells`, and
+  `reload()`.
+
+### Exports
+- `serialize_spell`, `LayeredGrimoire`, `GrimoireLayer` added to the top-level
+  package and `__all__`.
+
+### Notes
+- Pre-existing lint findings in untouched test files (`test_api.py`,
+  `test_bundles.py`) are left as-is per minimal-change discipline.
+
 ## [Unreleased] — Phase 3 + Quick Wins + Live-Bind API
 
 ### Added — Live-Bind API (spec §10.2, §12)

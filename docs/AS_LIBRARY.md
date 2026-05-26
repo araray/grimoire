@@ -840,3 +840,105 @@ from grimoire import (
     ArtifactNotFoundError, MissingVariableError,
 )
 ```
+
+---
+
+## v0.2.0 — Attributes, Tag Search, Write API, Layered Overlays
+
+### Opaque spell attributes (WS-G4)
+
+`Spell.attributes` is a declared, opaque `dict[str, Any]` that grimoire stores
+and serves verbatim but never interprets. It lets a downstream application
+attach arbitrary structured data to a spell without grimoire growing
+app-specific fields:
+
+```yaml
+---
+id: convergence/personas/skeptic
+name: Skeptic
+tags: [convergence, "pack:creative"]
+attributes:
+  color: "#cc3333"
+  constraints: [challenge assumptions, cite evidence]
+---
+
+# SYSTEM
+You are a relentless skeptic.
+```
+
+`attributes` is **excluded from `content_hash`** (it is metadata, not prompt
+body), so editing it does not register as prompt drift.
+
+### Tag vocabulary & search (WS-G3)
+
+```python
+g = Grimoire("/path/to/repo")
+
+# OR semantics (default is AND):
+g.list_spells(tags=["analysis", "creative"], match="any")
+
+# Distinct tag vocabulary with counts (ordered by count desc, then name):
+g.list_tags()                 # {"convergence": 7, "pack:creative": 6, ...}
+g.list_tags(prefix="pack:")   # only tags starting with "pack:"
+
+# Case-insensitive substring search:
+g.search_spells("skeptic")
+g.search_spells("review", fields=("name", "description"))
+```
+
+`match="all"|"any"` is available on every `list_*` method (spells, runes,
+rituals, bundles, skilldocs).
+
+### Spell write API + serializer (WS-G1)
+
+```python
+from grimoire import Grimoire, Spell, MessageBlock, MessageRole, serialize_spell
+
+g = Grimoire("/path/to/repo")
+
+spell = Spell(
+    id="team/reviewer",
+    name="Reviewer",
+    tags=["code"],
+    attributes={"color": "#0a0"},
+    raw_blocks=[MessageBlock(role=MessageRole.SYSTEM, content="You are a reviewer.")],
+)
+
+path = g.write_spell(spell)            # atomic write + hot index; refuses clobber
+g.update_spell(spell)                  # overwrite
+g.delete_spell("team/reviewer")        # remove file + index entry
+
+text = serialize_spell(spell)          # canonical .spell.md (round-trips with parse_spell)
+```
+
+`GrimoireRepo.load(path, writable=False)` produces a read-only repo whose
+write/delete operations raise `RepoError`.
+
+### Layered overlays (WS-G2)
+
+`LayeredGrimoire` composes ordered repos so a read-only *shipped* library can be
+overridden by writable *admin* / *user* overlays without mutating shipped files:
+
+```python
+from grimoire import LayeredGrimoire
+
+lg = LayeredGrimoire.from_roots([
+    ("shipped", "/opt/app/spells",          False),  # read-only
+    ("admin",   "/var/lib/app/admin",        True),  # writable (scaffolded if missing)
+    ("user",    "/var/lib/app/users/alice",  True),  # writable, highest precedence
+])
+
+lg.get_spell("convergence/personas/skeptic")   # highest-precedence layer wins
+lg.resolve_layer("convergence/personas/skeptic")  # -> "shipped" / "admin" / "user"
+
+# Writing an overlay shadows the shipped spell with the same id:
+lg.write_spell(my_overlay_spell, layer="user")
+# Deleting the overlay un-shadows the shipped definition again:
+lg.delete_spell("convergence/personas/skeptic", layer="user")
+
+lg.list_spells(match="any", tags=["custom"])    # merged, deduped-by-id view
+lg.list_tags()                                   # vocabulary over resolved view
+```
+
+Layers are ordered lowest → highest precedence. Writes target a named writable
+layer or, by default, the highest-precedence writable layer.

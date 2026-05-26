@@ -583,21 +583,64 @@ class Grimoire:
         """Get a ritual by ID."""
         return self._repo.get_ritual(ritual_id)
 
-    def list_spells(self, tags: list[str] | None = None) -> list[Spell]:
-        """List spells with optional tag filtering."""
-        return self._repo.list_spells(tags=tags)
+    def list_spells(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Spell]:
+        """List spells with optional tag filtering (``match`` = all|any)."""
+        return self._repo.list_spells(tags=tags, match=match)
 
-    def list_runes(self, tags: list[str] | None = None) -> list[RuneSpec]:
-        """List runes with optional tag filtering."""
-        return self._repo.list_runes(tags=tags)
+    def list_runes(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[RuneSpec]:
+        """List runes with optional tag filtering (``match`` = all|any)."""
+        return self._repo.list_runes(tags=tags, match=match)
 
-    def list_bundles(self, tags: list[str] | None = None) -> list[Bundle]:
-        """List bundles with optional tag filtering."""
-        return self._repo.list_bundles(tags=tags)
+    def list_bundles(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Bundle]:
+        """List bundles with optional tag filtering (``match`` = all|any)."""
+        return self._repo.list_bundles(tags=tags, match=match)
 
-    def list_rituals(self, tags: list[str] | None = None) -> list[Ritual]:
-        """List rituals with optional tag filtering."""
-        return self._repo.list_rituals(tags=tags)
+    def list_rituals(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Ritual]:
+        """List rituals with optional tag filtering (``match`` = all|any)."""
+        return self._repo.list_rituals(tags=tags, match=match)
+
+    # ── Tag vocabulary & search (WS-G3) ─────────────────────────────────────
+
+    def list_tags(self, prefix: str | None = None) -> dict[str, int]:
+        """Return the distinct spell-tag vocabulary with usage counts."""
+        return self._repo.list_tags(prefix=prefix)
+
+    def search_spells(
+        self,
+        query: str,
+        *,
+        fields: tuple[str, ...] = ("name", "description", "tags"),
+    ) -> list[Spell]:
+        """Case-insensitive substring search over spells."""
+        return self._repo.search_spells(query, fields=fields)
+
+    # ── Write API (WS-G1) ────────────────────────────────────────────────────
+
+    def write_spell(self, spell: Spell, *, overwrite: bool = False) -> Path:
+        """
+        Persist a spell to the repo's primary spell directory and index it.
+
+        Writing a spell does not affect the conjure engine (which is keyed on
+        promptlets and runes), so no engine rebuild is required. See
+        :meth:`GrimoireRepo.write_spell` for details.
+        """
+        return self._repo.write_spell(spell, overwrite=overwrite)
+
+    def update_spell(self, spell: Spell) -> Path:
+        """Persist a spell, overwriting any existing file with the same id."""
+        return self._repo.update_spell(spell)
+
+    def delete_spell(self, spell_id: str, *, missing_ok: bool = False) -> bool:
+        """Delete a spell file and drop it from the index."""
+        return self._repo.delete_spell(spell_id, missing_ok=missing_ok)
 
     # ── Repr ────────────────────────────────────────────────────────────────
 

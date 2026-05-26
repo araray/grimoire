@@ -48,6 +48,7 @@ from grimoire.exceptions import (
     SyncError,
     ValidationError,
 )
+from grimoire.layered import GrimoireLayer, LayeredGrimoire
 from grimoire.models import (
     Bundle,
     BundleInject,
@@ -75,7 +76,7 @@ from grimoire.rituals import parse_ritual, parse_ritual_file
 from grimoire.rituals.evaluator import RitualEvaluator
 from grimoire.runes.parser import parse_rune, parse_rune_file
 from grimoire.skilldocs import SkillDocSelector, parse_skilldoc, parse_skilldoc_file
-from grimoire.spells.parser import parse_spell, parse_spell_file
+from grimoire.spells.parser import parse_spell, parse_spell_file, serialize_spell
 from grimoire.store.repo import GrimoireRepo
 from grimoire.sync import DriftReport, LLMCoreSyncer, SemantiscanSyncer, SyncResult, WairuSyncer
 
@@ -108,11 +109,13 @@ __all__ = [
     "DriftReport",
     "Grimoire",
     "GrimoireError",
+    "GrimoireLayer",
     "GrimoireManifest",
     "GrimoireRepo",
     "IncludeError",
     "LLMCoreBinder",
     "LLMCoreSyncer",
+    "LayeredGrimoire",
     "ManifestError",
     "MessageBlock",
     "MessageRole",
@@ -162,4 +165,5 @@ __all__ = [
     "parse_skilldoc_file",
     "parse_spell",
     "parse_spell_file",
+    "serialize_spell",
 ]

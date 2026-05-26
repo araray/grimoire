@@ -406,6 +406,32 @@ grimoire spell show engineering/rca --json
 grimoire spell vars engineering/rca      # Show variable schema
 ```
 
+### `grimoire spell new|edit|rm` (write API)
+
+Create, edit, and delete spells from the CLI (writes to the repo's primary
+spell directory, `spells/<id>.spell.md`):
+
+```bash
+# Create a spell (at least one of --system/--user, or *-file, is required)
+grimoire spell new team/reviewer \
+  --name "Reviewer" --tags "code,quality" --description "Reviews code" \
+  --attributes '{"color": "#0a0"}' \
+  --system "You are a meticulous reviewer." \
+  --user   "Review: {{ diff }}"
+
+# Body blocks may also be read from a file ('-' = stdin)
+grimoire spell new team/reviewer --system-file ./system.md --user-file -
+
+# Edit in place — only supplied fields change; the body is preserved otherwise
+grimoire spell edit team/reviewer --tags "code,quality,strict" --description "…"
+
+# Delete (use --yes to skip confirmation)
+grimoire spell rm team/reviewer --yes
+```
+
+`--attributes` accepts a JSON object that is stored verbatim in the spell's
+opaque `attributes:` front-matter (grimoire never interprets it).
+
 ### `grimoire rune list|show|validate`
 
 ```bash

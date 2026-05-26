@@ -210,6 +210,16 @@ class Spell(BaseModel):
     description: str | None = None
     license: str | None = None
 
+    # Opaque application metadata (WS-G4).
+    #
+    # Grimoire stores and serves this mapping verbatim but never *interprets* it.
+    # It exists so downstream applications (e.g. Convergence personas/modes) can
+    # attach arbitrary structured data — colors, constraints, mode flags — to a
+    # spell without grimoire growing app-specific fields. Excluded from the
+    # content hash by design: ``attributes`` is metadata, not prompt body, so a
+    # change to it must not register as prompt drift.
+    attributes: dict[str, Any] = Field(default_factory=dict)
+
     # Variable schema
     variables: dict[str, VariableSpec] = Field(default_factory=dict)
 
