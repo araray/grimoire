@@ -13,7 +13,12 @@ Two operating modes:
 from grimoire.bind.base import Binder, BindResult, BindTarget
 from grimoire.bind.llmcore import LLMCoreBinder
 from grimoire.bind.semantiscan import SemantiscanBinder
-from grimoire.bind.wairu import WairuBinder
+from grimoire.bind.wairu import (
+    WairuBinder,
+    register_wairu_plugin_tools,
+    wairu_tool_to_rune,
+    wairu_tools_to_runes,
+)
 
 __all__ = [
     "BindResult",
@@ -22,4 +27,7 @@ __all__ = [
     "LLMCoreBinder",
     "SemantiscanBinder",
     "WairuBinder",
+    "register_wairu_plugin_tools",
+    "wairu_tool_to_rune",
+    "wairu_tools_to_runes",
 ]

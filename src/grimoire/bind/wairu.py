@@ -17,15 +17,255 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 import yaml
 
 from grimoire.bind.base import Binder, BindFormat, BindResult, BindTarget, BoundFile
-from grimoire.models import RuneSpec, Spell
+from grimoire.models import CommandSpec, ParamSpec, Permission, RiskLevel, RuneSpec, Spell
 from grimoire.store.repo import GrimoireRepo
 
 logger = logging.getLogger(__name__)
+
+
+_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
+
+
+def _get_field(source: Any, name: str, default: Any = None) -> Any:
+    if isinstance(source, Mapping):
+        return source.get(name, default)
+    return getattr(source, name, default)
+
+
+def _slug(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = fallback
+    return _SLUG_RE.sub("_", text).strip("._-") or fallback
+
+
+def _as_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, Iterable) and not isinstance(value, Mapping):
+        return [str(item) for item in value if item is not None and str(item)]
+    return [str(value)]
+
+
+def _as_number(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _risk_level(value: Any) -> RiskLevel:
+    if isinstance(value, RiskLevel):
+        return value
+    if value is None:
+        return RiskLevel.LOW
+    try:
+        return RiskLevel(str(value).strip().lower())
+    except ValueError:
+        return RiskLevel.LOW
+
+
+def _permissions(value: Any) -> list[Permission]:
+    permissions: list[Permission] = []
+    for item in _as_str_list(value):
+        try:
+            permissions.append(Permission(item))
+        except ValueError:
+            logger.debug("Ignoring unknown wairu tool permission %r", item)
+    return permissions
+
+
+def _schema_mapping(value: Any) -> Mapping[str, Any]:
+    if isinstance(value, Mapping):
+        return value
+    if value is None:
+        return {}
+    return {"type": str(value)}
+
+
+def _parameter_items(parameters: Any) -> list[tuple[str, Mapping[str, Any], bool]]:
+    if not isinstance(parameters, Mapping):
+        return []
+
+    if isinstance(parameters.get("properties"), Mapping):
+        required_names = set(_as_str_list(parameters.get("required")))
+        return [
+            (str(name), _schema_mapping(schema), str(name) in required_names)
+            for name, schema in parameters["properties"].items()
+        ]
+
+    return [
+        (str(name), _schema_mapping(schema), _as_bool(_schema_mapping(schema).get("required")))
+        for name, schema in parameters.items()
+    ]
+
+
+def _param_spec(name: str, schema: Mapping[str, Any], required: bool) -> ParamSpec:
+    enum = schema.get("enum")
+    return ParamSpec(
+        name=name,
+        type=str(schema.get("type") or "string"),
+        required=required,
+        default=schema.get("default"),
+        description=schema.get("description"),
+        minimum=_as_number(schema.get("minimum")),
+        maximum=_as_number(schema.get("maximum")),
+        enum=[str(item) for item in enum] if isinstance(enum, list) else None,
+        pattern=str(schema["pattern"]) if schema.get("pattern") is not None else None,
+    )
+
+
+def wairu_tool_to_rune(
+    tool: Any,
+    *,
+    plugin_name: str = "wairu",
+    rune_id_prefix: str = "wairu/plugins",
+    version: str = "1.0.0",
+    tags: list[str] | None = None,
+) -> RuneSpec:
+    """
+    Convert a Wairu-style tool definition into a canonical rune contract.
+
+    The input may be a Wairu ``ToolDefinition`` dataclass, a dict produced by a
+    plugin manifest, or any object exposing compatible attributes. This keeps
+    grimoire independent from wairu while still giving runtimes a shared
+    contract surface for prompt/tool introspection.
+    """
+    tool_name = str(_get_field(tool, "name", "tool"))
+    plugin_slug = _slug(plugin_name, "wairu")
+    tool_slug = _slug(tool_name, "tool")
+    prefix = rune_id_prefix.strip("/") or "wairu/plugins"
+    risk = _risk_level(_get_field(tool, "risk_level", None))
+    requires_approval = _as_bool(_get_field(tool, "requires_approval", False))
+
+    params = [
+        _param_spec(name, schema, required)
+        for name, schema, required in _parameter_items(_get_field(tool, "parameters", {}))
+    ]
+    description = _get_field(tool, "description", None)
+    command = CommandSpec(
+        name=tool_name,
+        summary=description,
+        params=params,
+        side_effects=_as_str_list(_get_field(tool, "side_effects", [])),
+        risk_level=risk,
+        requires_approval=requires_approval,
+        execution_target=_get_field(tool, "execution_target", None),
+    )
+
+    owasp_tags = [f"owasp:{tag}" for tag in _as_str_list(_get_field(tool, "owasp", []))]
+    rune_tags = [
+        "wairu",
+        "plugin",
+        f"plugin:{plugin_slug}",
+        *_as_str_list(tags),
+        *_as_str_list(_get_field(tool, "tags", [])),
+        *owasp_tags,
+    ]
+
+    return RuneSpec(
+        id=f"{prefix}/{plugin_slug}/{tool_slug}",
+        name=f"{plugin_name}.{tool_name}",
+        version=version,
+        description=description,
+        tags=list(dict.fromkeys(rune_tags)),
+        platforms=_as_str_list(_get_field(tool, "platforms", ["any"])) or ["any"],
+        risk_level=risk,
+        permissions=_permissions(_get_field(tool, "permissions", [])),
+        requires_approval=requires_approval,
+        commands=[command],
+        mappings={
+            "wairu.plugin": plugin_name,
+            "wairu.tool": tool_name,
+            "wairu.qualified_tool": f"{plugin_name}.{tool_name}",
+        },
+    )
+
+
+def wairu_tools_to_runes(
+    tools: Iterable[Any],
+    *,
+    plugin_name: str = "wairu",
+    rune_id_prefix: str = "wairu/plugins",
+    version: str = "1.0.0",
+    tags: list[str] | None = None,
+) -> list[RuneSpec]:
+    """Convert an iterable of Wairu-style tools into rune contracts."""
+    return [
+        wairu_tool_to_rune(
+            tool,
+            plugin_name=plugin_name,
+            rune_id_prefix=rune_id_prefix,
+            version=version,
+            tags=tags,
+        )
+        for tool in tools
+    ]
+
+
+def register_wairu_plugin_tools(
+    target: Any,
+    tools: Iterable[Any],
+    *,
+    plugin_name: str = "wairu",
+    rune_id_prefix: str = "wairu/plugins",
+    version: str = "1.0.0",
+    tags: list[str] | None = None,
+    overwrite: bool = True,
+) -> list[RuneSpec]:
+    """
+    Register Wairu plugin tools as in-memory runes on a Grimoire facade or repo.
+
+    This is intentionally an in-memory runtime helper. Persistent rune authoring
+    should still go through Grimoire's on-disk rune files or a future public rune
+    write API.
+    """
+    runes = wairu_tools_to_runes(
+        tools,
+        plugin_name=plugin_name,
+        rune_id_prefix=rune_id_prefix,
+        version=version,
+        tags=tags,
+    )
+
+    repo = _get_field(target, "_repo", target)
+    registry = _get_field(repo, "_runes", None)
+    if not isinstance(registry, dict):
+        raise TypeError("target must be a Grimoire facade or GrimoireRepo-like object")
+
+    for rune in runes:
+        if not overwrite and rune.id in registry:
+            raise ValueError(f"Rune already registered: {rune.id}")
+        registry[rune.id] = rune
+
+    engine = _get_field(target, "_engine", None)
+    engine_runes = _get_field(engine, "_runes", None)
+    if isinstance(engine_runes, dict):
+        for rune in runes:
+            engine_runes[rune.id] = rune
+
+    return runes
 
 
 def _rune_to_tool_pack(rune: RuneSpec) -> dict[str, Any]:
