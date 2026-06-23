@@ -24,6 +24,7 @@ from typing import Any
 
 from grimoire.bind.base import Binder, BindFormat, BindResult, BindTarget, BoundFile
 from grimoire.models import CommandSpec, MessageRole, RuneSpec, Spell
+from grimoire.runes.schema import command_to_openai_tool_schema, param_to_json_schema
 from grimoire.store.repo import GrimoireRepo
 
 logger = logging.getLogger(__name__)
@@ -100,42 +101,11 @@ def _spell_to_registry_entry(spell: Spell) -> dict[str, Any]:
 
 def _command_to_tool_schema(cmd: CommandSpec, rune: RuneSpec) -> dict[str, Any]:
     """Convert a rune command to an OpenAI-compatible tool/function schema."""
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-
-    for param in cmd.params:
-        prop: dict[str, Any] = {"type": param.type}
-        if param.description:
-            prop["description"] = param.description
-        if param.enum:
-            prop["enum"] = param.enum
-        if param.minimum is not None:
-            prop["minimum"] = param.minimum
-        if param.maximum is not None:
-            prop["maximum"] = param.maximum
-        if param.default is not None:
-            prop["default"] = param.default
-        properties[param.name] = prop
-
-        if param.required:
-            required.append(param.name)
-
-    schema: dict[str, Any] = {
-        "type": "function",
-        "function": {
-            "name": f"{rune.id.replace('/', '_')}_{cmd.name}",
-            "description": cmd.summary or f"{rune.name}: {cmd.name}",
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-            },
-        },
-    }
-
-    if required:
-        schema["function"]["parameters"]["required"] = required
-
-    return schema
+    return command_to_openai_tool_schema(
+        cmd,
+        rune,
+        function_name=f"{rune.id.replace('/', '_')}_{cmd.name}",
+    )
 
 
 def _rune_to_activity_definition(rune: RuneSpec) -> dict[str, Any]:
@@ -160,15 +130,24 @@ def _rune_to_activity_definition(rune: RuneSpec) -> dict[str, Any]:
         # Parameter schemas
         params: list[dict[str, Any]] = []
         for p in cmd.params:
+            param_schema = param_to_json_schema(p)
             param_entry: dict[str, Any] = {
                 "name": p.name,
-                "type": p.type,
+                "type": param_schema["type"],
                 "required": p.required,
             }
-            if p.default is not None:
-                param_entry["default"] = p.default
-            if p.description:
-                param_entry["description"] = p.description
+            if "default" in param_schema:
+                param_entry["default"] = param_schema["default"]
+            if "description" in param_schema:
+                param_entry["description"] = param_schema["description"]
+            if "enum" in param_schema:
+                param_entry["enum"] = param_schema["enum"]
+            if "minimum" in param_schema:
+                param_entry["min_value"] = param_schema["minimum"]
+            if "maximum" in param_schema:
+                param_entry["max_value"] = param_schema["maximum"]
+            if "pattern" in param_schema:
+                param_entry["pattern"] = param_schema["pattern"]
             params.append(param_entry)
         cmd_entry["parameters"] = params
 

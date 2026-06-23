@@ -23,7 +23,7 @@ import pytest
 
 from grimoire.api import Grimoire, _runes_to_openai_tools
 from grimoire.exceptions import ArtifactNotFoundError
-from grimoire.models import ConjuredPrompt, ConjuredRitualStep
+from grimoire.models import CommandSpec, ConjuredPrompt, ConjuredRitualStep, ParamSpec, RuneSpec
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 REPO_DIR = FIXTURES_DIR / "grimoire_repo"
@@ -135,9 +135,9 @@ class TestConjure:
             variables={"issue_title": "Bug", "symptoms": "crash"},
             context={"provider": "anthropic"},
         )
-        text = result.to_text()
         # Anthropic variant injects "style/concise" promptlet
         assert isinstance(result, ConjuredPrompt)
+        assert result.to_text()
 
     def test_conjure_ritual(self, grim: Grimoire) -> None:
         """conjure() on a ritual ID returns list of ConjuredRitualStep."""
@@ -347,7 +347,7 @@ class TestToolSchemas:
 
     def test_unsupported_format_raises(self, grim: Grimoire) -> None:
         """Unsupported schema_format raises ValueError."""
-        with pytest.raises(ValueError, match="(?i)unsupported"):
+        with pytest.raises(ValueError, match=r"(?i)unsupported"):
             grim.tool_schemas(schema_format="jsonschema")
 
 
@@ -572,6 +572,31 @@ class TestRunesToOpenAITools:
         for tool in tools:
             params = tool["function"]["parameters"]
             assert "properties" in params
+
+    def test_constraints_in_schema(self) -> None:
+        rune = RuneSpec(
+            id="devtools/check",
+            name="Check",
+            commands=[
+                CommandSpec(
+                    name="run",
+                    params=[
+                        ParamSpec(name="enabled", type="bool", default=True),
+                        ParamSpec(name="target", type="string", pattern="^[a-z]+$", required=True),
+                        ParamSpec(name="limit", type="integer", minimum=1, maximum=10),
+                    ],
+                )
+            ],
+        )
+        tool = _runes_to_openai_tools([rune])[0]
+        params = tool["function"]["parameters"]
+        props = params["properties"]
+        assert props["enabled"]["type"] == "boolean"
+        assert props["enabled"]["default"] is True
+        assert props["target"]["pattern"] == "^[a-z]+$"
+        assert props["limit"]["minimum"] == 1
+        assert props["limit"]["maximum"] == 10
+        assert params["required"] == ["target"]
 
     def test_multiple_runes(self, grim: Grimoire) -> None:
         runes = grim.list_runes()

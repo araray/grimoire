@@ -74,6 +74,7 @@ from grimoire.models import (
     VariableSpec,
 )
 from grimoire.rituals.evaluator import RitualEvaluator
+from grimoire.runes.schema import command_to_openai_tool_schema
 from grimoire.store.repo import GrimoireRepo
 from grimoire.validate.rules import (
     LintConfig,
@@ -669,39 +670,5 @@ def _runes_to_openai_tools(runes: list[RuneSpec]) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for rune in runes:
         for cmd in rune.commands:
-            properties: dict[str, Any] = {}
-            required: list[str] = []
-
-            for param in cmd.params:
-                prop: dict[str, Any] = {"type": param.type or "string"}
-                if param.description:
-                    prop["description"] = param.description
-                if param.enum:
-                    prop["enum"] = param.enum
-                if param.minimum is not None:
-                    prop["minimum"] = param.minimum
-                if param.maximum is not None:
-                    prop["maximum"] = param.maximum
-                if param.default is not None:
-                    prop["default"] = param.default
-                properties[param.name] = prop
-
-                if param.required:
-                    required.append(param.name)
-
-            tool: dict[str, Any] = {
-                "type": "function",
-                "function": {
-                    "name": f"{rune.id.replace('/', '__')}__{cmd.name}",
-                    "description": cmd.summary or f"{rune.name}: {cmd.name}",
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                    },
-                },
-            }
-            if required:
-                tool["function"]["parameters"]["required"] = required
-
-            tools.append(tool)
+            tools.append(command_to_openai_tool_schema(cmd, rune))
     return tools

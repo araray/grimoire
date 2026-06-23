@@ -426,6 +426,40 @@ class TestLLMCoreActivityDefinition:
         assert schema["type"] == "function"
         assert "porcelain" in schema["function"]["parameters"]["properties"]
 
+    def test_parameter_constraints(self):
+        rune = RuneSpec(
+            id="test/constrained",
+            name="Constrained Tool",
+            commands=[
+                CommandSpec(
+                    name="run",
+                    params=[
+                        ParamSpec(
+                            name="timeout",
+                            type="integer",
+                            required=True,
+                            minimum=1,
+                            maximum=300,
+                        ),
+                        ParamSpec(
+                            name="mode",
+                            type="string",
+                            enum=["safe", "fast"],
+                            default="safe",
+                        ),
+                        ParamSpec(name="slug", type="string", pattern="^[a-z]+$"),
+                    ],
+                )
+            ],
+        )
+        activity = _rune_to_activity_definition(rune)
+        params = {param["name"]: param for param in activity["commands"][0]["parameters"]}
+        assert params["timeout"]["min_value"] == 1
+        assert params["timeout"]["max_value"] == 300
+        assert params["mode"]["enum"] == ["safe", "fast"]
+        assert params["mode"]["default"] == "safe"
+        assert params["slug"]["pattern"] == "^[a-z]+$"
+
 
 class TestLLMCoreToolSchema:
     def test_command_to_tool_schema(self, git_rune: RuneSpec):
@@ -435,6 +469,7 @@ class TestLLMCoreToolSchema:
         func = schema["function"]
         assert "devtools_git_status" == func["name"]
         assert "porcelain" in func["parameters"]["properties"]
+        assert func["parameters"]["properties"]["porcelain"]["type"] == "boolean"
 
 
 class TestLLMCoreBinder:
@@ -816,6 +851,12 @@ class TestWairuToolPackEdgeCases:
                             default="safe",
                             enum=["safe", "fast", "debug"],
                         ),
+                        ParamSpec(
+                            name="slug",
+                            type="string",
+                            required=False,
+                            pattern="^[a-z]+$",
+                        ),
                     ],
                     side_effects=["writes_fs"],
                 ),
@@ -830,6 +871,7 @@ class TestWairuToolPackEdgeCases:
         assert props["timeout"]["maximum"] == 300
         assert props["mode"]["enum"] == ["safe", "fast", "debug"]
         assert props["mode"]["default"] == "safe"
+        assert props["slug"]["pattern"] == "^[a-z]+$"
         assert "required" in tool["parameters"]
         assert "timeout" in tool["parameters"]["required"]
 
