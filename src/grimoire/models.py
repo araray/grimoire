@@ -97,6 +97,29 @@ class OutputContractType(str, Enum):
     TEXT = "text"
 
 
+class SemanticRole(str, Enum):
+    """Semantic roles for spell intent blueprints."""
+
+    AGENT = "Agent"
+    PATIENT = "Patient"
+    RECIPIENT = "Recipient"
+    INSTRUMENT = "Instrument"
+    SOURCE = "Source"
+    GOAL = "Goal"
+    TEMPORAL = "Temporal"
+    LOCATION = "Location"
+    MANNER = "Manner"
+    THEME = "Theme"
+
+
+class BlueprintStatus(str, Enum):
+    """Lifecycle status for a semantic blueprint."""
+
+    ACTIVE = "active"
+    EXPERIMENTAL = "experimental"
+    DEPRECATED = "deprecated"
+
+
 # =============================================================================
 # VARIABLE SCHEMA
 # =============================================================================
@@ -168,6 +191,46 @@ class OutputContract(BaseModel):
     rubric: list[str | RubricInclude] | None = None
 
 
+class BlueprintParticipant(BaseModel):
+    """A participant in the task scene described by a semantic blueprint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: str = Field(description="Spell-specific role label.")
+    semantic_role: SemanticRole = Field(description="Role in the task scene.")
+    description: str = ""
+
+
+class SemanticBlueprint(BaseModel):
+    """Structured representation of the task a spell addresses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scene_goal: str
+    participants: list[BlueprintParticipant] = Field(default_factory=list)
+    action_to_complete: str
+    domain: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    status: BlueprintStatus = BlueprintStatus.ACTIVE
+
+    def to_retrieval_text(self) -> str:
+        """Render a stable text blob suitable for procedural retrieval indexing."""
+        parts = [
+            f"Goal: {self.scene_goal}",
+            f"Action: {self.action_to_complete}",
+        ]
+        if self.domain:
+            parts.append(f"Domain: {self.domain}")
+        for participant in self.participants:
+            line = f"Participant [{participant.semantic_role.value}]: {participant.role}"
+            if participant.description:
+                line += f" - {participant.description}"
+            parts.append(line)
+        if self.keywords:
+            parts.append("Keywords: " + ", ".join(self.keywords))
+        return "\n".join(parts)
+
+
 # =============================================================================
 # RUNE EXPORT CONFIG
 # =============================================================================
@@ -209,6 +272,8 @@ class Spell(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     license: str | None = None
+    intent_description: str | None = None
+    semantic_blueprint: SemanticBlueprint | None = None
 
     # Opaque application metadata (WS-G4).
     #
@@ -256,6 +321,15 @@ class Spell(BaseModel):
     def optional_variables(self) -> dict[str, VariableSpec]:
         """Return variables with defaults or not required."""
         return {k: v for k, v in self.variables.items() if not v.required}
+
+    @property
+    def effective_intent(self) -> str:
+        """Return the primary text used for intent-based spell discovery."""
+        if self.intent_description:
+            return self.intent_description
+        if self.semantic_blueprint is not None:
+            return self.semantic_blueprint.scene_goal
+        return self.description or self.name or self.id
 
 
 # =============================================================================

@@ -50,6 +50,8 @@ from grimoire.exceptions import (
 )
 from grimoire.layered import GrimoireLayer, LayeredGrimoire
 from grimoire.models import (
+    BlueprintParticipant,
+    BlueprintStatus,
     Bundle,
     BundleInject,
     BundleVariant,
@@ -65,12 +67,21 @@ from grimoire.models import (
     RitualStep,
     RitualStepPlan,
     RuneSpec,
+    SemanticBlueprint,
+    SemanticRole,
     SkillDoc,
     SkillDocSection,
     Spell,
     VariableSensitivity,
     VariableSpec,
     VariableType,
+)
+from grimoire.procedural import (
+    IntentMatch,
+    ProceduralIndexer,
+    ProceduralRetriever,
+    build_spell_index_document,
+    find_spells_by_intent_linear,
 )
 from grimoire.rituals import parse_ritual, parse_ritual_file
 from grimoire.rituals.evaluator import RitualEvaluator
@@ -93,6 +104,8 @@ __all__ = [
     "BindResult",
     "BindTarget",
     "Binder",
+    "BlueprintParticipant",
+    "BlueprintStatus",
     "Bundle",
     "BundleAssembler",
     "BundleAssemblyError",
@@ -113,6 +126,7 @@ __all__ = [
     "GrimoireManifest",
     "GrimoireRepo",
     "IncludeError",
+    "IntentMatch",
     "LLMCoreBinder",
     "LLMCoreSyncer",
     "LayeredGrimoire",
@@ -120,6 +134,8 @@ __all__ = [
     "MessageBlock",
     "MessageRole",
     "MissingVariableError",
+    "ProceduralIndexer",
+    "ProceduralRetriever",
     "Promptlet",
     "Provenance",
     "RepoError",
@@ -135,6 +151,8 @@ __all__ = [
     "RuneParseError",
     "RuneSpec",
     "RuneValidationError",
+    "SemanticBlueprint",
+    "SemanticRole",
     "SemantiscanBinder",
     "SemantiscanSyncer",
     "SkillDoc",
@@ -155,6 +173,8 @@ __all__ = [
     "WairuBinder",
     "WairuSyncer",
     "__version__",
+    "build_spell_index_document",
+    "find_spells_by_intent_linear",
     "parse_bundle",
     "parse_bundle_file",
     "parse_ritual",

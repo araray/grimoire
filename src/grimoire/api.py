@@ -52,10 +52,14 @@ Usage::
 
     # Agent-friendly catalog
     catalog = g.catalog()
+
+    # Procedural RAG / spell discovery
+    matches = await g.find_by_intent("create a security threat model")
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Any
@@ -70,8 +74,16 @@ from grimoire.models import (
     ConjuredRitualStep,
     Ritual,
     RuneSpec,
+    SemanticRole,
     Spell,
     VariableSpec,
+)
+from grimoire.procedural import (
+    IntentMatch,
+    ProceduralSearchResult,
+    find_spells_by_intent_linear,
+    normalize_procedural_results,
+    spell_matches_filters,
 )
 from grimoire.rituals.evaluator import RitualEvaluator
 from grimoire.runes.schema import command_to_openai_tool_schema
@@ -106,6 +118,10 @@ class Grimoire:
                    defaults to the current working directory.
         strict: If ``True`` (default), conjuring raises on missing required
                 variables.  If ``False``, leaves placeholders unreplaced.
+        procedural_retriever: Optional Semantiscan-compatible retriever. If
+                              absent, intent search uses an in-memory fallback.
+        procedural_indexer: Optional Semantiscan-compatible indexer used by
+                            ``rebuild_procedural_index``.
     """
 
     def __init__(
@@ -113,10 +129,14 @@ class Grimoire:
         repo_path: str | Path | None = None,
         *,
         strict: bool = True,
+        procedural_retriever: Any | None = None,
+        procedural_indexer: Any | None = None,
     ) -> None:
         path = Path(repo_path) if repo_path is not None else Path.cwd()
         self._repo = GrimoireRepo.load(path)
         self._strict = strict
+        self._procedural_retriever = procedural_retriever
+        self._procedural_indexer = procedural_indexer
         self._engine = self._build_engine()
         self._assembler = BundleAssembler(self._repo)
 
@@ -623,6 +643,86 @@ class Grimoire:
         """Case-insensitive substring search over spells."""
         return self._repo.search_spells(query, fields=fields)
 
+    async def find_by_intent(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter_domain: str | None = None,
+        filter_semantic_role: SemanticRole | str | None = None,
+        include_deprecated: bool = False,
+    ) -> list[IntentMatch]:
+        """Find spells by natural-language procedural intent.
+
+        If a procedural retriever was supplied at construction time, Grimoire
+        queries that retriever and resolves results back to loaded spells. If no
+        retriever is configured, it uses a deterministic token-overlap fallback
+        over the in-memory spell catalog.
+        """
+        if top_k <= 0:
+            return []
+
+        if self._procedural_retriever is None:
+            return find_spells_by_intent_linear(
+                query,
+                self._repo.list_spells(),
+                top_k=top_k,
+                filter_domain=filter_domain,
+                filter_semantic_role=filter_semantic_role,
+                include_deprecated=include_deprecated,
+            )
+
+        raw_results = await _search_procedural_retriever(
+            self._procedural_retriever,
+            query,
+            top_k=max(top_k * 4, top_k),
+            filters=_intent_filters(
+                filter_domain=filter_domain,
+                filter_semantic_role=filter_semantic_role,
+                include_deprecated=include_deprecated,
+            ),
+        )
+
+        matches: list[IntentMatch] = []
+        seen: set[str] = set()
+        for result in raw_results:
+            if result.spell_id in seen:
+                continue
+            spell = self._repo._spells.get(result.spell_id)
+            if spell is None:
+                continue
+            if not spell_matches_filters(
+                spell,
+                filter_domain=filter_domain,
+                filter_semantic_role=filter_semantic_role,
+                include_deprecated=include_deprecated,
+            ):
+                continue
+            seen.add(result.spell_id)
+            matches.append(
+                IntentMatch(
+                    spell=spell,
+                    score=result.score,
+                    highlight=result.highlight or result.content[:240] or spell.effective_intent,
+                )
+            )
+
+        return sorted(matches, key=lambda match: (-match.score, match.spell.id))[:top_k]
+
+    async def rebuild_procedural_index(self) -> list[str]:
+        """Re-index all loaded spells using the configured procedural indexer."""
+        if self._procedural_indexer is None:
+            raise RuntimeError(
+                "rebuild_procedural_index requires procedural_indexer= at construction"
+            )
+        if hasattr(self._procedural_indexer, "index_spells"):
+            return await self._procedural_indexer.index_spells(self._repo.list_spells())
+
+        document_ids: list[str] = []
+        for spell in self._repo.list_spells():
+            document_ids.append(await self._procedural_indexer.index_spell(spell))
+        return document_ids
+
     # ── Write API (WS-G1) ────────────────────────────────────────────────────
 
     def write_spell(self, spell: Spell, *, overwrite: bool = False) -> Path:
@@ -672,3 +772,41 @@ def _runes_to_openai_tools(runes: list[RuneSpec]) -> list[dict[str, Any]]:
         for cmd in rune.commands:
             tools.append(command_to_openai_tool_schema(cmd, rune))
     return tools
+
+
+async def _search_procedural_retriever(
+    retriever: Any,
+    query: str,
+    *,
+    top_k: int,
+    filters: dict[str, Any] | None,
+) -> list[ProceduralSearchResult]:
+    if hasattr(retriever, "search"):
+        result = retriever.search(query, top_k=top_k, filters=filters)
+    elif hasattr(retriever, "retrieve"):
+        result = retriever.retrieve(query, top_k=top_k, filters=filters)
+    elif callable(retriever):
+        result = retriever(query, top_k=top_k, filters=filters)
+    else:
+        raise TypeError("procedural_retriever must expose search(), retrieve(), or be callable")
+
+    if inspect.isawaitable(result):
+        result = await result
+    if isinstance(result, list) and all(isinstance(r, ProceduralSearchResult) for r in result):
+        return result
+    return normalize_procedural_results(result)
+
+
+def _intent_filters(
+    *,
+    filter_domain: str | None,
+    filter_semantic_role: SemanticRole | str | None,
+    include_deprecated: bool,
+) -> dict[str, Any]:
+    filters: dict[str, Any] = {}
+    if filter_domain:
+        filters["domain"] = filter_domain
+    # Status and semantic-role filters are applied after resolving spells.
+    # Backend metadata operators vary, and role metadata may be comma-joined.
+    _ = filter_semantic_role, include_deprecated
+    return filters
