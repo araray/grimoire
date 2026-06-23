@@ -90,7 +90,7 @@ from grimoire.procedural import (
     tool_matches_filters,
 )
 from grimoire.rituals.evaluator import RitualEvaluator
-from grimoire.runes.schema import command_to_openai_tool_schema
+from grimoire.runes.schema import command_parameters_schema, command_to_openai_tool_schema
 from grimoire.store.repo import GrimoireRepo
 from grimoire.validate.rules import (
     LintConfig,
@@ -476,6 +476,43 @@ class Grimoire:
 
         return _runes_to_openai_tools(runes)
 
+    def to_mcp_tool_manifest(
+        self,
+        rune_id: str | None = None,
+        *,
+        rune_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return a JSON-safe MCP ``tools/list`` manifest for rune commands.
+
+        Args:
+            rune_id: Optional single rune ID to export.
+            rune_ids: Optional list of rune IDs to export.
+            tags: Optional tag filter used when no explicit rune IDs are given.
+
+        Returns:
+            Manifest with MCP ``tools`` entries and Grimoire metadata under
+            ``_meta`` for later MCP server approval/routing decisions.
+
+        Raises:
+            ValueError: If both ``rune_id`` and ``rune_ids`` are supplied.
+        """
+        if rune_id is not None and rune_ids is not None:
+            raise ValueError("Pass either rune_id or rune_ids, not both")
+
+        selected_ids = [rune_id] if rune_id is not None else rune_ids
+        if selected_ids is not None:
+            runes = []
+            for rid in selected_ids:
+                try:
+                    runes.append(self._repo.get_rune(rid))
+                except ArtifactNotFoundError:
+                    logger.warning("to_mcp_tool_manifest: rune %r not found, skipping", rid)
+        else:
+            runes = self._repo.list_runes(tags=tags)
+
+        return _runes_to_mcp_tool_manifest(runes)
+
     # ── In-memory bind ──────────────────────────────────────────────────────
 
     def bind(
@@ -846,6 +883,59 @@ def _runes_to_openai_tools(runes: list[RuneSpec]) -> list[dict[str, Any]]:
         for cmd in rune.commands:
             tools.append(command_to_openai_tool_schema(cmd, rune))
     return tools
+
+
+def _runes_to_mcp_tool_manifest(runes: list[RuneSpec]) -> dict[str, Any]:
+    """Convert rune commands to an MCP ``tools/list`` compatible manifest."""
+    tools: list[dict[str, Any]] = []
+    for rune in runes:
+        for command in rune.commands:
+            tool_name = f"{rune.id.replace('/', '__')}__{command.name}"
+            risk_level = command.risk_level or rune.risk_level
+            requires_approval = command.requires_approval or rune.requires_approval
+            permissions = [str(getattr(permission, "value", permission)) for permission in rune.permissions]
+            execution_target = command.execution_target
+            side_effects = [str(effect) for effect in command.side_effects]
+
+            tool: dict[str, Any] = {
+                "name": tool_name,
+                "description": command.summary or f"{rune.name}: {command.name}",
+                "inputSchema": command_parameters_schema(command),
+                "_meta": {
+                    "grimoire.rune_id": rune.id,
+                    "grimoire.rune_name": rune.name,
+                    "grimoire.command_name": command.name,
+                    "grimoire.risk_level": risk_level.value,
+                    "grimoire.requires_approval": requires_approval,
+                    "grimoire.permissions": permissions,
+                    "grimoire.tags": [str(tag) for tag in rune.tags],
+                    "grimoire.side_effects": side_effects,
+                    "grimoire.tool_name": tool_name,
+                },
+            }
+            if execution_target:
+                tool["_meta"]["grimoire.execution_target"] = str(execution_target)
+            if rune.content_hash:
+                tool["_meta"]["grimoire.content_hash"] = rune.content_hash
+
+            destructive_permissions = {"write_fs", "exec"}
+            if side_effects or destructive_permissions.intersection(permissions):
+                tool["annotations"] = {
+                    "readOnlyHint": False,
+                    "destructiveHint": True,
+                }
+            else:
+                tool["annotations"] = {
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                }
+
+            tools.append(tool)
+
+    return {
+        "schema_version": "grimoire.mcp_tool_manifest.v1",
+        "tools": tools,
+    }
 
 
 async def _search_procedural_retriever(

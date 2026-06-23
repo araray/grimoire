@@ -104,6 +104,7 @@ def _parse_commands(raw_commands: list[dict] | None) -> list[CommandSpec]:
                     risk_level=cmd_data.get("risk_level"),
                     requires_approval=cmd_data.get("requires_approval", False),
                     examples=examples,
+                    execution_target=cmd_data.get("execution_target"),
                 )
             )
         except Exception as e:
@@ -149,6 +150,7 @@ def parse_rune(data: dict, source_path: str | None = None) -> RuneSpec:
             permissions=data.get("permissions", []),
             requires_approval=data.get("requires_approval", False),
             commands=commands,
+            mappings=data.get("mappings", {}),
             source_path=source_path,
         )
     except Exception as e:
