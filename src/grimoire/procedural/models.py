@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from grimoire.models import Spell
+from grimoire.models import CommandSpec, RuneSpec, Spell
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,9 @@ class ProceduralSearchResult:
     content: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
     highlight: str = ""
+    artifact_type: str = "spell"
+    rune_id: str = ""
+    command_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -37,4 +40,19 @@ class IntentMatch:
     highlight: str = ""
 
 
-__all__ = ["IntentMatch", "ProceduralSearchResult", "SpellIndexDocument"]
+@dataclass(frozen=True)
+class ToolIntentMatch:
+    """A rune command matched to a natural-language capability query."""
+
+    rune: RuneSpec
+    command: CommandSpec
+    score: float
+    highlight: str = ""
+
+
+__all__ = [
+    "IntentMatch",
+    "ProceduralSearchResult",
+    "SpellIndexDocument",
+    "ToolIntentMatch",
+]

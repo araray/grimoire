@@ -13,9 +13,13 @@ from grimoire.procedural import (
     IntentMatch,
     ProceduralIndexer,
     ProceduralSearchResult,
+    ToolIntentMatch,
+    build_rune_command_index_documents,
     build_spell_index_document,
     find_spells_by_intent_linear,
+    find_tools_by_intent_linear,
 )
+from grimoire.runes.parser import parse_rune
 from grimoire.spells.parser import parse_spell
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
@@ -51,6 +55,29 @@ Summarize {{ document }}.
 """
 
 
+def _git_rune_data() -> dict[str, Any]:
+    return {
+        "id": "devtools/git",
+        "name": "Git diagnostics",
+        "description": "Git commands for repository diagnostics.",
+        "tags": ["devtools", "vcs", "engineering"],
+        "risk_level": "low",
+        "permissions": ["read_fs"],
+        "commands": [
+            {
+                "name": "status",
+                "summary": "Show working tree status",
+                "params": [{"name": "porcelain", "type": "bool", "default": True}],
+            },
+            {
+                "name": "diff",
+                "summary": "Show changes in the working tree",
+                "params": [{"name": "staged", "type": "bool", "default": False}],
+            },
+        ],
+    }
+
+
 def test_build_spell_index_document_from_blueprint() -> None:
     spell = parse_spell(_blueprint_spell_text())
 
@@ -64,6 +91,22 @@ def test_build_spell_index_document_from_blueprint() -> None:
     assert document.metadata["participant_semantic_roles"] == "Agent,Patient,Recipient"
     assert document.metadata["keywords"] == "security,audit,risk"
     assert document.metadata["has_blueprint"] is True
+
+
+def test_build_rune_command_index_documents() -> None:
+    rune = parse_rune(_git_rune_data())
+
+    documents = build_rune_command_index_documents(rune)
+
+    assert [document.document_id for document in documents] == [
+        "devtools/git@1.0.0::status",
+        "devtools/git@1.0.0::diff",
+    ]
+    assert "Show working tree status" in documents[0].content
+    assert documents[0].metadata["artifact_type"] == "rune_command"
+    assert documents[0].metadata["rune_id"] == "devtools/git"
+    assert documents[0].metadata["command_name"] == "status"
+    assert documents[0].metadata["permissions"] == "read_fs"
 
 
 @pytest.mark.asyncio
@@ -93,6 +136,22 @@ def test_linear_find_by_intent_filters_blueprint_fields() -> None:
     assert [match.spell.id for match in matches] == ["test/security_summary"]
 
 
+def test_linear_find_tools_by_intent_matches_rune_commands() -> None:
+    rune = parse_rune(_git_rune_data())
+
+    matches = find_tools_by_intent_linear(
+        "show git working tree status",
+        [rune],
+        tags=["devtools"],
+        max_risk="low",
+    )
+
+    assert [f"{match.rune.id}::{match.command.name}" for match in matches[:1]] == [
+        "devtools/git::status"
+    ]
+    assert isinstance(matches[0], ToolIntentMatch)
+
+
 class FakeProceduralRetriever:
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -120,6 +179,38 @@ class FakeProceduralRetriever:
         ]
 
 
+class FakeToolProceduralRetriever:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def search(
+        self,
+        query: str,
+        *,
+        top_k: int,
+        filters: dict[str, Any] | None = None,
+    ) -> list[ProceduralSearchResult]:
+        self.calls.append({"query": query, "top_k": top_k, "filters": filters})
+        return [
+            ProceduralSearchResult(
+                spell_id="",
+                artifact_type="rune_command",
+                rune_id="devtools/git",
+                command_name="diff",
+                score=0.82,
+                highlight="Show changes in the working tree",
+            ),
+            ProceduralSearchResult(
+                spell_id="",
+                artifact_type="rune_command",
+                rune_id="devtools/git",
+                command_name="status",
+                score=0.91,
+                highlight="Show working tree status",
+            ),
+        ]
+
+
 @pytest.mark.asyncio
 async def test_find_by_intent_uses_configured_retriever_and_resolves_spells() -> None:
     retriever = FakeProceduralRetriever()
@@ -134,6 +225,26 @@ async def test_find_by_intent_uses_configured_retriever_and_resolves_spells() ->
     assert isinstance(matches[0], IntentMatch)
     assert matches[0].highlight == "STRIDE threat model"
     assert retriever.calls == [{"query": "security review", "top_k": 8, "filters": {}}]
+
+
+@pytest.mark.asyncio
+async def test_find_tools_by_intent_uses_configured_retriever_and_resolves_commands() -> None:
+    retriever = FakeToolProceduralRetriever()
+    grim = Grimoire(REPO_DIR, procedural_retriever=retriever)
+
+    matches = await grim.find_tools_by_intent("show repository status", top_k=1)
+
+    assert [f"{match.rune.id}::{match.command.name}" for match in matches] == [
+        "devtools/git::status"
+    ]
+    assert matches[0].highlight == "Show working tree status"
+    assert retriever.calls == [
+        {
+            "query": "show repository status",
+            "top_k": 4,
+            "filters": {"artifact_type": "rune_command"},
+        }
+    ]
 
 
 class FakeIndexer:
@@ -232,3 +343,21 @@ async def test_procedural_indexer_uses_semantiscan_style_protocols() -> None:
             "filters": None,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_procedural_indexer_indexes_rune_commands() -> None:
+    storage = FakeStorage()
+    embedder = FakeEmbedder()
+    indexer = ProceduralIndexer(storage=storage, embedder=embedder)
+    rune = parse_rune(_git_rune_data())
+
+    document_ids = await indexer.index_rune(rune)
+
+    assert document_ids == [
+        "devtools/git@1.0.0::status",
+        "devtools/git@1.0.0::diff",
+    ]
+    assert storage.add_calls[0]["ids"] == document_ids
+    assert storage.add_calls[0]["metadatas"][0]["artifact_type"] == "rune_command"
+    assert storage.add_calls[0]["metadatas"][0]["command_name"] == "status"

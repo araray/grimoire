@@ -57,22 +57,30 @@ def normalize_procedural_results(batch: Any) -> list[ProceduralSearchResult]:
     normalized: list[ProceduralSearchResult] = []
     for row in rows:
         metadata = _metadata(row)
+        artifact_type = str(metadata.get("artifact_type") or _value(row, "artifact_type", "spell"))
         spell_id = metadata.get("spell_id") or _value(row, "spell_id")
         if not spell_id:
             chunk_id = _value(row, "chunk_id") or _value(row, "id")
             if isinstance(chunk_id, str) and "@" in chunk_id:
                 spell_id = chunk_id.rsplit("@", 1)[0]
-        if not spell_id:
+        rune_id = str(metadata.get("rune_id") or _value(row, "rune_id", "") or "")
+        command_name = str(
+            metadata.get("command_name") or _value(row, "command_name", "") or ""
+        )
+        if not spell_id and artifact_type != "rune_command":
             continue
         normalized.append(
             ProceduralSearchResult(
-                spell_id=str(spell_id),
+                spell_id=str(spell_id or ""),
                 score=float(_value(row, "score", 0.0) or 0.0),
                 content=str(_value(row, "content", _value(row, "document", "")) or ""),
                 metadata=metadata,
                 highlight=str(
                     _value(row, "highlight", _value(row, "explanation", "")) or ""
                 ),
+                artifact_type=artifact_type,
+                rune_id=rune_id,
+                command_name=command_name,
             )
         )
     return normalized

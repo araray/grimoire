@@ -72,6 +72,7 @@ from grimoire.models import (
     Bundle,
     ConjuredPrompt,
     ConjuredRitualStep,
+    RiskLevel,
     Ritual,
     RuneSpec,
     SemanticRole,
@@ -81,9 +82,12 @@ from grimoire.models import (
 from grimoire.procedural import (
     IntentMatch,
     ProceduralSearchResult,
+    ToolIntentMatch,
     find_spells_by_intent_linear,
+    find_tools_by_intent_linear,
     normalize_procedural_results,
     spell_matches_filters,
+    tool_matches_filters,
 )
 from grimoire.rituals.evaluator import RitualEvaluator
 from grimoire.runes.schema import command_to_openai_tool_schema
@@ -715,13 +719,83 @@ class Grimoire:
             raise RuntimeError(
                 "rebuild_procedural_index requires procedural_indexer= at construction"
             )
-        if hasattr(self._procedural_indexer, "index_spells"):
-            return await self._procedural_indexer.index_spells(self._repo.list_spells())
-
         document_ids: list[str] = []
-        for spell in self._repo.list_spells():
-            document_ids.append(await self._procedural_indexer.index_spell(spell))
+        if hasattr(self._procedural_indexer, "index_spells"):
+            document_ids.extend(await self._procedural_indexer.index_spells(self._repo.list_spells()))
+        else:
+            for spell in self._repo.list_spells():
+                document_ids.append(await self._procedural_indexer.index_spell(spell))
+
+        if hasattr(self._procedural_indexer, "index_runes"):
+            document_ids.extend(await self._procedural_indexer.index_runes(self._repo.list_runes()))
         return document_ids
+
+    async def find_tools_by_intent(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        tags: list[str] | None = None,
+        max_risk: RiskLevel | str | None = None,
+        include_requires_approval: bool = True,
+    ) -> list[ToolIntentMatch]:
+        """Find rune commands by natural-language capability intent."""
+        if top_k <= 0:
+            return []
+
+        if self._procedural_retriever is None:
+            return find_tools_by_intent_linear(
+                query,
+                self._repo.list_runes(),
+                top_k=top_k,
+                tags=tags,
+                max_risk=max_risk,
+                include_requires_approval=include_requires_approval,
+            )
+
+        raw_results = await _search_procedural_retriever(
+            self._procedural_retriever,
+            query,
+            top_k=max(top_k * 4, top_k),
+            filters=_tool_filters(tags=tags),
+        )
+
+        matches: list[ToolIntentMatch] = []
+        seen: set[tuple[str, str]] = set()
+        for result in raw_results:
+            if result.artifact_type != "rune_command":
+                continue
+            key = (result.rune_id, result.command_name)
+            if key in seen:
+                continue
+            rune = self._repo._runes.get(result.rune_id)
+            if rune is None:
+                continue
+            command = rune.get_command(result.command_name)
+            if command is None:
+                continue
+            if not tool_matches_filters(
+                rune,
+                command_name=command.name,
+                tags=tags,
+                max_risk=max_risk,
+                include_requires_approval=include_requires_approval,
+            ):
+                continue
+            seen.add(key)
+            matches.append(
+                ToolIntentMatch(
+                    rune=rune,
+                    command=command,
+                    score=result.score,
+                    highlight=result.highlight or result.content[:240] or command.summary or rune.name,
+                )
+            )
+
+        return sorted(
+            matches,
+            key=lambda match: (-match.score, match.rune.id, match.command.name),
+        )[:top_k]
 
     # ── Write API (WS-G1) ────────────────────────────────────────────────────
 
@@ -809,4 +883,10 @@ def _intent_filters(
     # Status and semantic-role filters are applied after resolving spells.
     # Backend metadata operators vary, and role metadata may be comma-joined.
     _ = filter_semantic_role, include_deprecated
+    return filters
+
+
+def _tool_filters(*, tags: list[str] | None) -> dict[str, Any]:
+    _ = tags
+    filters = {"artifact_type": "rune_command"}
     return filters
