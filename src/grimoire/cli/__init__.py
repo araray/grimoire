@@ -12,6 +12,7 @@ import click
 
 from grimoire.cli.commands import bind, conjure, doctor, init, ritual, rune, spell
 from grimoire.cli.commands.bundle import bundle_group
+from grimoire.cli.commands.mcp import mcp_group
 from grimoire.cli.commands.prompt import prompt_group
 from grimoire.cli.commands.skill import skill_group
 from grimoire.cli.commands.sync import sync_group
@@ -121,3 +122,4 @@ cli.add_command(bundle_group, "bundle")
 cli.add_command(skill_group, "skill")
 cli.add_command(sync_group, "sync")
 cli.add_command(prompt_group, "prompt")
+cli.add_command(mcp_group, "mcp")

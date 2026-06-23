@@ -294,6 +294,12 @@ class TestGlobalOptions:
         assert result.exit_code == 0
         assert "grimoire" in result.output
         assert "conjure" in result.output
+        assert "mcp" in result.output
+
+    def test_mcp_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["mcp", "--help"])
+        assert result.exit_code == 0
+        assert "serve" in result.output
 
     def test_set_vars_parsing(self, runner: CliRunner, repo_args: list[str]) -> None:
         """Test that --set key=value works correctly."""

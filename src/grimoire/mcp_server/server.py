@@ -1,11 +1,13 @@
 """FastAPI application factory for Grimoire's MCP JSON-RPC endpoint."""
 
 import json
+from collections.abc import Callable, Iterable, Mapping
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
 from grimoire.api import Grimoire
 from grimoire.mcp_server.auth import AUTH_TOKEN_STATE_KEY, require_bearer_token
+from grimoire.mcp_server.executor import MCPToolExecutor
 from grimoire.mcp_server.handlers import MCPRequestHandler
 
 
@@ -16,6 +18,8 @@ def build_app(
     endpoint_path: str = "/mcp",
     server_name: str = "grimoire",
     server_version: str | None = None,
+    tool_callables: Mapping[str, Callable[..., Any]] | None = None,
+    allowed_tools: Iterable[str] | None = None,
 ) -> Any:
     """Build a FastAPI app that exposes Grimoire runes over MCP JSON-RPC."""
     if not auth_token:
@@ -30,10 +34,15 @@ def build_app(
         ) from exc
 
     resolved_version = server_version or _package_version()
+    tool_executor = MCPToolExecutor(
+        callables=tool_callables or {},
+        allowed_tools=set(allowed_tools) if allowed_tools is not None else None,
+    )
     handler = MCPRequestHandler(
         grimoire,
         server_name=server_name,
         server_version=resolved_version,
+        tool_executor=tool_executor,
     )
 
     app = FastAPI(title="Grimoire MCP Server", version=resolved_version)
