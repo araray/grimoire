@@ -94,6 +94,7 @@ def federate_mcp_tool_call(
     call_status = _string_value(result_meta.get("grimoire.call_status")) or "requested"
     tool_name = _string_value(tool.get("name")) or _string_value(meta.get("grimoire.tool_name"))
     risk_level = _string_value(meta.get("grimoire.risk_level")) or "unknown"
+    owasp_categories = _string_list(meta.get("grimoire.owasp_categories"))
     requires_approval = bool(meta.get("grimoire.requires_approval"))
 
     return EcosystemEvent(
@@ -105,13 +106,14 @@ def federate_mcp_tool_call(
         event_type=f"mcp.tool_call.{call_status}",
         severity=_severity_for_call_status(call_status),
         correlation_id=correlation_id,
-        tags=["mcp_tool", f"risk:{risk_level}"],
+        tags=["mcp_tool", f"risk:{risk_level}", *[f"owasp:{tag}" for tag in owasp_categories]],
         payload={
             "tool_name": tool_name,
             "arguments": _json_safe(arguments),
             "rune_id": _string_value(meta.get("grimoire.rune_id")),
             "command_name": _string_value(meta.get("grimoire.command_name")),
             "risk_level": risk_level,
+            "owasp_categories": owasp_categories,
             "requires_approval": requires_approval,
             "execution_target": _string_value(meta.get("grimoire.execution_target")),
             "result": _json_safe(result),
@@ -137,6 +139,9 @@ def federate_rune_command(
         or _string_value(rune_data.get("risk_level"))
         or "unknown"
     )
+    owasp_categories = _string_list(
+        command_data.get("owasp_categories") or rune_data.get("owasp_categories")
+    )
     requires_approval = bool(command_data.get("requires_approval")) or bool(
         rune_data.get("requires_approval")
     )
@@ -150,13 +155,18 @@ def federate_rune_command(
         event_type="rune.command_registered",
         severity="warning" if requires_approval or risk_level == "high" else "info",
         correlation_id=correlation_id,
-        tags=[f"risk:{risk_level}", *[str(tag) for tag in (rune_data.get("tags") or [])]],
+        tags=[
+            f"risk:{risk_level}",
+            *[str(tag) for tag in (rune_data.get("tags") or [])],
+            *[f"owasp:{category}" for category in owasp_categories],
+        ],
         payload={
             "rune_id": rune_id,
             "rune_name": _string_value(rune_data.get("name")),
             "command_name": command_name,
             "summary": _string_value(command_data.get("summary")),
             "risk_level": risk_level,
+            "owasp_categories": owasp_categories,
             "requires_approval": requires_approval,
             "permissions": _json_safe(rune_data.get("permissions") or []),
             "side_effects": _json_safe(command_data.get("side_effects") or []),
@@ -235,6 +245,16 @@ def _string_value(value: Any) -> str | None:
     if enum_value is not None:
         return str(enum_value)
     return str(value)
+
+
+def _string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item) for item in value]
+    return [str(value)]
 
 
 def _method_label(method: str) -> str:

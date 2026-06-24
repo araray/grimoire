@@ -896,6 +896,7 @@ def _runes_to_mcp_tool_manifest(runes: list[RuneSpec]) -> dict[str, Any]:
             permissions = [str(getattr(permission, "value", permission)) for permission in rune.permissions]
             execution_target = command.execution_target
             side_effects = [str(effect) for effect in command.side_effects]
+            owasp_categories = command.owasp_categories or rune.owasp_categories
 
             tool: dict[str, Any] = {
                 "name": tool_name,
@@ -907,6 +908,7 @@ def _runes_to_mcp_tool_manifest(runes: list[RuneSpec]) -> dict[str, Any]:
                     "grimoire.command_name": command.name,
                     "grimoire.risk_level": risk_level.value,
                     "grimoire.requires_approval": requires_approval,
+                    "grimoire.owasp_categories": [str(category) for category in owasp_categories],
                     "grimoire.permissions": permissions,
                     "grimoire.tags": [str(tag) for tag in rune.tags],
                     "grimoire.side_effects": side_effects,

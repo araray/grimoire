@@ -396,6 +396,10 @@ class TestMCPToolManifest:
         }
         assert tool["_meta"]["grimoire.risk_level"] == "high"
         assert tool["_meta"]["grimoire.requires_approval"] is True
+        assert tool["_meta"]["grimoire.owasp_categories"] == [
+            "LLM05_supply_chain",
+            "LLM06_excessive_agency",
+        ]
         assert tool["_meta"]["grimoire.execution_target"] == "sandbox"
         assert tool["_meta"]["grimoire.permissions"] == ["exec", "write_fs", "read_fs"]
 

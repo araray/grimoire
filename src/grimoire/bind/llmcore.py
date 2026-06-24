@@ -123,6 +123,7 @@ def _rune_to_activity_definition(rune: RuneSpec) -> dict[str, Any]:
             "risk_level": (cmd.risk_level or rune.risk_level).value
             if (cmd.risk_level or rune.risk_level)
             else "low",
+            "owasp_categories": cmd.owasp_categories or rune.owasp_categories,
             "requires_approval": cmd.requires_approval or rune.requires_approval,
             "side_effects": cmd.side_effects,
         }
@@ -162,6 +163,7 @@ def _rune_to_activity_definition(rune: RuneSpec) -> dict[str, Any]:
         "version": rune.version,
         "description": rune.description,
         "tags": rune.tags,
+        "owasp_categories": rune.owasp_categories,
         "risk_level": rune.risk_level.value,
         "permissions": [p.value for p in rune.permissions],
         "platforms": rune.platforms,

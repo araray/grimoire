@@ -125,6 +125,7 @@ def _rune_command_metadata(rune: RuneSpec, command: CommandSpec) -> dict[str, An
         "name": rune.name,
         "summary": command.summary or "",
         "risk_level": risk_level.value if risk_level else "",
+        "owasp_categories": ",".join(command.owasp_categories or rune.owasp_categories),
         "requires_approval": command.requires_approval or rune.requires_approval,
         "permissions": ",".join(permission.value for permission in rune.permissions),
         "execution_target": command.execution_target or "",

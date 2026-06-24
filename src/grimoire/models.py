@@ -407,6 +407,7 @@ class CommandSpec(BaseModel):
     returns: ReturnSpec | None = None
     side_effects: list[str] = Field(default_factory=list)
     risk_level: RiskLevel | None = None
+    owasp_categories: list[str] = Field(default_factory=list)
     requires_approval: bool = False
     examples: list[CommandExample] = Field(default_factory=list)
     # W1: execution target hint for sync/export adapters
@@ -429,6 +430,7 @@ class RuneSpec(BaseModel):
     version: str = "1.0.0"
     description: str | None = None
     tags: list[str] = Field(default_factory=list)
+    owasp_categories: list[str] = Field(default_factory=list)
 
     # Constraints
     platforms: list[str] = Field(default_factory=lambda: ["any"])

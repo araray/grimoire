@@ -139,6 +139,7 @@ def _result_meta(meta: dict[str, Any]) -> dict[str, Any]:
         "grimoire.command_name",
         "grimoire.risk_level",
         "grimoire.requires_approval",
+        "grimoire.owasp_categories",
         "grimoire.execution_target",
         "grimoire.tool_name",
     )

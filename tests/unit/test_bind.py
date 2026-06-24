@@ -830,11 +830,13 @@ class TestWairuToolPackEdgeCases:
             id="test/constrained",
             name="Constrained Tool",
             risk_level=RiskLevel.MEDIUM,
+            owasp_categories=["LLM06_excessive_agency"],
             requires_approval=True,
             commands=[
                 CommandSpec(
                     name="run",
                     summary="Run with constraints",
+                    owasp_categories=["LLM05_supply_chain"],
                     params=[
                         ParamSpec(
                             name="timeout",
@@ -864,6 +866,8 @@ class TestWairuToolPackEdgeCases:
         )
         pack = _rune_to_tool_pack(rune)
         tool = pack["tools"][0]
+        assert pack["owasp_categories"] == ["LLM06_excessive_agency"]
+        assert tool["owasp_categories"] == ["LLM05_supply_chain"]
         assert tool["requires_approval"] is True
         assert tool["risk_level"] == "medium"
         props = tool["parameters"]["properties"]

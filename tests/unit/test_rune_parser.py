@@ -109,6 +109,24 @@ class TestParseRune:
         assert len(rune.commands[0].examples) == 1
         assert rune.commands[0].examples[0].call == {"arg": "value"}
 
+    def test_owasp_categories_parsed(self) -> None:
+        data = {
+            "id": "test/security",
+            "owasp_categories": ["LLM06_excessive_agency"],
+            "commands": [
+                {
+                    "name": "run",
+                    "risk_level": "high",
+                    "owasp_categories": ["LLM05_supply_chain"],
+                }
+            ],
+        }
+
+        rune = parse_rune(data)
+
+        assert rune.owasp_categories == ["LLM06_excessive_agency"]
+        assert rune.commands[0].owasp_categories == ["LLM05_supply_chain"]
+
 
 class TestParseRuneFile:
     """Tests for file-based rune parsing."""

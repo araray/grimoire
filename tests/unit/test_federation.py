@@ -60,6 +60,7 @@ def test_federate_mcp_tool_call_pending_approval() -> None:
             "grimoire.rune_id": "wairu/shell",
             "grimoire.command_name": "run",
             "grimoire.risk_level": "high",
+            "grimoire.owasp_categories": ["LLM06_excessive_agency"],
             "grimoire.requires_approval": True,
             "grimoire.execution_target": "local",
             "grimoire.tool_name": "wairu__shell__run",
@@ -85,6 +86,8 @@ def test_federate_mcp_tool_call_pending_approval() -> None:
     assert federated.payload["rune_id"] == "wairu/shell"
     assert federated.payload["command_name"] == "run"
     assert federated.payload["risk_level"] == "high"
+    assert federated.payload["owasp_categories"] == ["LLM06_excessive_agency"]
+    assert "owasp:LLM06_excessive_agency" in federated.tags
     assert federated.payload["requires_approval"] is True
     assert federated.payload["arguments"]["command"] == "rm -rf /tmp/example"
 
@@ -116,6 +119,7 @@ def test_federate_rune_command_uses_risk_and_approval_metadata() -> None:
         name="run",
         summary="Run a shell command",
         risk_level=RiskLevel.HIGH,
+        owasp_categories=["LLM05_supply_chain"],
         requires_approval=True,
         side_effects=["executes shell command"],
         execution_target="local",
@@ -124,6 +128,7 @@ def test_federate_rune_command_uses_risk_and_approval_metadata() -> None:
         id="wairu/shell",
         name="Shell",
         risk_level=RiskLevel.MEDIUM,
+        owasp_categories=["LLM06_excessive_agency"],
         permissions=[Permission.EXEC],
         tags=["runtime", "shell"],
         commands=[command],
@@ -138,9 +143,11 @@ def test_federate_rune_command_uses_risk_and_approval_metadata() -> None:
     assert federated.event_type == "rune.command_registered"
     assert federated.severity == "warning"
     assert "risk:high" in federated.tags
+    assert "owasp:LLM05_supply_chain" in federated.tags
     assert federated.payload["rune_id"] == "wairu/shell"
     assert federated.payload["command_name"] == "run"
     assert federated.payload["risk_level"] == "high"
+    assert federated.payload["owasp_categories"] == ["LLM05_supply_chain"]
     assert federated.payload["requires_approval"] is True
     assert federated.payload["permissions"] == ["exec"]
 
