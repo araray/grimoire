@@ -137,6 +137,30 @@ class TestRuneCommands:
         result = runner.invoke(cli, [*repo_args, "rune", "validate", "devtools/git"])
         assert result.exit_code == 0
 
+    def test_rune_audit_json(self, runner: CliRunner, repo_args: list[str]) -> None:
+        result = runner.invoke(cli, [*repo_args, "rune", "audit", "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert data["schema"] == "grimoire.rune_owasp_audit.v1"
+        assert data["histogram"]["LLM05_supply_chain"] == 1
+        assert data["histogram"]["LLM06_excessive_agency"] == 1
+        assert data["missing_high_risk"] == []
+
+    def test_rune_audit_filter_owasp(self, runner: CliRunner, repo_args: list[str]) -> None:
+        result = runner.invoke(
+            cli,
+            [*repo_args, "rune", "audit", "--filter-owasp", "LLM05_supply_chain"],
+        )
+        assert result.exit_code == 0
+        assert "Matching commands" in result.output
+        assert "wairu/shell" in result.output
+        assert "LLM05_supply_chain" in result.output
+
+    def test_rune_audit_require_owasp(self, runner: CliRunner, repo_args: list[str]) -> None:
+        result = runner.invoke(cli, [*repo_args, "rune", "audit", "--require-owasp"])
+        assert result.exit_code == 0
+        assert "High-risk OWASP coverage: complete" in result.output
+
 
 class TestConjureCommand:
     """Tests for ``grimoire conjure``."""
@@ -294,6 +318,12 @@ class TestGlobalOptions:
         assert result.exit_code == 0
         assert "grimoire" in result.output
         assert "conjure" in result.output
+        assert "mcp" in result.output
+
+    def test_mcp_help(self, runner: CliRunner) -> None:
+        result = runner.invoke(cli, ["mcp", "--help"])
+        assert result.exit_code == 0
+        assert "serve" in result.output
 
     def test_set_vars_parsing(self, runner: CliRunner, repo_args: list[str]) -> None:
         """Test that --set key=value works correctly."""

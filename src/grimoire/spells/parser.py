@@ -66,6 +66,8 @@ _KNOWN_FM_KEYS = frozenset(
         "tags",
         "description",
         "license",
+        "intent_description",
+        "semantic_blueprint",
         "attributes",
         "variables",
         "requires_runes",
@@ -257,6 +259,8 @@ def parse_spell(text: str, source_path: str | None = None) -> Spell:
             tags=fm.get("tags", []),
             description=fm.get("description"),
             license=fm.get("license"),
+            intent_description=fm.get("intent_description"),
+            semantic_blueprint=fm.get("semantic_blueprint"),
             attributes=attributes,
             variables=variables,
             requires_runes=fm.get("requires_runes", []),
@@ -301,6 +305,8 @@ _FM_ORDER = (
     "attributes",
     "description",
     "license",
+    "intent_description",
+    "semantic_blueprint",
     "variables",
     "requires_runes",
     "suggests_runes",
@@ -345,6 +351,12 @@ def serialize_spell(spell: Spell) -> str:
         fm["description"] = spell.description
     if spell.license is not None:
         fm["license"] = spell.license
+    if spell.intent_description is not None:
+        fm["intent_description"] = spell.intent_description
+    if spell.semantic_blueprint is not None:
+        fm["semantic_blueprint"] = spell.semantic_blueprint.model_dump(
+            mode="json", exclude_none=True
+        )
     if spell.variables:
         fm["variables"] = {
             name: spec.model_dump(mode="json", exclude_defaults=True)

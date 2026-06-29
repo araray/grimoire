@@ -52,10 +52,14 @@ Usage::
 
     # Agent-friendly catalog
     catalog = g.catalog()
+
+    # Procedural RAG / spell discovery
+    matches = await g.find_by_intent("create a security threat model")
 """
 
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 from typing import Any
@@ -68,12 +72,25 @@ from grimoire.models import (
     Bundle,
     ConjuredPrompt,
     ConjuredRitualStep,
+    RiskLevel,
     Ritual,
     RuneSpec,
+    SemanticRole,
     Spell,
     VariableSpec,
 )
+from grimoire.procedural import (
+    IntentMatch,
+    ProceduralSearchResult,
+    ToolIntentMatch,
+    find_spells_by_intent_linear,
+    find_tools_by_intent_linear,
+    normalize_procedural_results,
+    spell_matches_filters,
+    tool_matches_filters,
+)
 from grimoire.rituals.evaluator import RitualEvaluator
+from grimoire.runes.schema import command_parameters_schema, command_to_openai_tool_schema
 from grimoire.store.repo import GrimoireRepo
 from grimoire.validate.rules import (
     LintConfig,
@@ -105,6 +122,10 @@ class Grimoire:
                    defaults to the current working directory.
         strict: If ``True`` (default), conjuring raises on missing required
                 variables.  If ``False``, leaves placeholders unreplaced.
+        procedural_retriever: Optional Semantiscan-compatible retriever. If
+                              absent, intent search uses an in-memory fallback.
+        procedural_indexer: Optional Semantiscan-compatible indexer used by
+                            ``rebuild_procedural_index``.
     """
 
     def __init__(
@@ -112,10 +133,14 @@ class Grimoire:
         repo_path: str | Path | None = None,
         *,
         strict: bool = True,
+        procedural_retriever: Any | None = None,
+        procedural_indexer: Any | None = None,
     ) -> None:
         path = Path(repo_path) if repo_path is not None else Path.cwd()
         self._repo = GrimoireRepo.load(path)
         self._strict = strict
+        self._procedural_retriever = procedural_retriever
+        self._procedural_indexer = procedural_indexer
         self._engine = self._build_engine()
         self._assembler = BundleAssembler(self._repo)
 
@@ -451,6 +476,43 @@ class Grimoire:
 
         return _runes_to_openai_tools(runes)
 
+    def to_mcp_tool_manifest(
+        self,
+        rune_id: str | None = None,
+        *,
+        rune_ids: list[str] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return a JSON-safe MCP ``tools/list`` manifest for rune commands.
+
+        Args:
+            rune_id: Optional single rune ID to export.
+            rune_ids: Optional list of rune IDs to export.
+            tags: Optional tag filter used when no explicit rune IDs are given.
+
+        Returns:
+            Manifest with MCP ``tools`` entries and Grimoire metadata under
+            ``_meta`` for later MCP server approval/routing decisions.
+
+        Raises:
+            ValueError: If both ``rune_id`` and ``rune_ids`` are supplied.
+        """
+        if rune_id is not None and rune_ids is not None:
+            raise ValueError("Pass either rune_id or rune_ids, not both")
+
+        selected_ids = [rune_id] if rune_id is not None else rune_ids
+        if selected_ids is not None:
+            runes = []
+            for rid in selected_ids:
+                try:
+                    runes.append(self._repo.get_rune(rid))
+                except ArtifactNotFoundError:
+                    logger.warning("to_mcp_tool_manifest: rune %r not found, skipping", rid)
+        else:
+            runes = self._repo.list_runes(tags=tags)
+
+        return _runes_to_mcp_tool_manifest(runes)
+
     # ── In-memory bind ──────────────────────────────────────────────────────
 
     def bind(
@@ -622,6 +684,156 @@ class Grimoire:
         """Case-insensitive substring search over spells."""
         return self._repo.search_spells(query, fields=fields)
 
+    async def find_by_intent(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        filter_domain: str | None = None,
+        filter_semantic_role: SemanticRole | str | None = None,
+        include_deprecated: bool = False,
+    ) -> list[IntentMatch]:
+        """Find spells by natural-language procedural intent.
+
+        If a procedural retriever was supplied at construction time, Grimoire
+        queries that retriever and resolves results back to loaded spells. If no
+        retriever is configured, it uses a deterministic token-overlap fallback
+        over the in-memory spell catalog.
+        """
+        if top_k <= 0:
+            return []
+
+        if self._procedural_retriever is None:
+            return find_spells_by_intent_linear(
+                query,
+                self._repo.list_spells(),
+                top_k=top_k,
+                filter_domain=filter_domain,
+                filter_semantic_role=filter_semantic_role,
+                include_deprecated=include_deprecated,
+            )
+
+        raw_results = await _search_procedural_retriever(
+            self._procedural_retriever,
+            query,
+            top_k=max(top_k * 4, top_k),
+            filters=_intent_filters(
+                filter_domain=filter_domain,
+                filter_semantic_role=filter_semantic_role,
+                include_deprecated=include_deprecated,
+            ),
+        )
+
+        matches: list[IntentMatch] = []
+        seen: set[str] = set()
+        for result in raw_results:
+            if result.spell_id in seen:
+                continue
+            spell = self._repo._spells.get(result.spell_id)
+            if spell is None:
+                continue
+            if not spell_matches_filters(
+                spell,
+                filter_domain=filter_domain,
+                filter_semantic_role=filter_semantic_role,
+                include_deprecated=include_deprecated,
+            ):
+                continue
+            seen.add(result.spell_id)
+            matches.append(
+                IntentMatch(
+                    spell=spell,
+                    score=result.score,
+                    highlight=result.highlight or result.content[:240] or spell.effective_intent,
+                )
+            )
+
+        return sorted(matches, key=lambda match: (-match.score, match.spell.id))[:top_k]
+
+    async def rebuild_procedural_index(self) -> list[str]:
+        """Re-index all loaded spells using the configured procedural indexer."""
+        if self._procedural_indexer is None:
+            raise RuntimeError(
+                "rebuild_procedural_index requires procedural_indexer= at construction"
+            )
+        document_ids: list[str] = []
+        if hasattr(self._procedural_indexer, "index_spells"):
+            document_ids.extend(await self._procedural_indexer.index_spells(self._repo.list_spells()))
+        else:
+            for spell in self._repo.list_spells():
+                document_ids.append(await self._procedural_indexer.index_spell(spell))
+
+        if hasattr(self._procedural_indexer, "index_runes"):
+            document_ids.extend(await self._procedural_indexer.index_runes(self._repo.list_runes()))
+        return document_ids
+
+    async def find_tools_by_intent(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        tags: list[str] | None = None,
+        max_risk: RiskLevel | str | None = None,
+        include_requires_approval: bool = True,
+    ) -> list[ToolIntentMatch]:
+        """Find rune commands by natural-language capability intent."""
+        if top_k <= 0:
+            return []
+
+        if self._procedural_retriever is None:
+            return find_tools_by_intent_linear(
+                query,
+                self._repo.list_runes(),
+                top_k=top_k,
+                tags=tags,
+                max_risk=max_risk,
+                include_requires_approval=include_requires_approval,
+            )
+
+        raw_results = await _search_procedural_retriever(
+            self._procedural_retriever,
+            query,
+            top_k=max(top_k * 4, top_k),
+            filters=_tool_filters(tags=tags),
+        )
+
+        matches: list[ToolIntentMatch] = []
+        seen: set[tuple[str, str]] = set()
+        for result in raw_results:
+            if result.artifact_type != "rune_command":
+                continue
+            key = (result.rune_id, result.command_name)
+            if key in seen:
+                continue
+            rune = self._repo._runes.get(result.rune_id)
+            if rune is None:
+                continue
+            command = rune.get_command(result.command_name)
+            if command is None:
+                continue
+            if not tool_matches_filters(
+                rune,
+                command_name=command.name,
+                tags=tags,
+                max_risk=max_risk,
+                include_requires_approval=include_requires_approval,
+            ):
+                continue
+            seen.add(key)
+            matches.append(
+                ToolIntentMatch(
+                    rune=rune,
+                    command=command,
+                    score=result.score,
+                    highlight=result.highlight or result.content[:240] or command.summary or rune.name,
+                )
+            )
+
+        return sorted(
+            matches,
+            key=lambda match: (-match.score, match.rune.id, match.command.name),
+        )[:top_k]
+
     # ── Write API (WS-G1) ────────────────────────────────────────────────────
 
     def write_spell(self, spell: Spell, *, overwrite: bool = False) -> Path:
@@ -669,39 +881,104 @@ def _runes_to_openai_tools(runes: list[RuneSpec]) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     for rune in runes:
         for cmd in rune.commands:
-            properties: dict[str, Any] = {}
-            required: list[str] = []
+            tools.append(command_to_openai_tool_schema(cmd, rune))
+    return tools
 
-            for param in cmd.params:
-                prop: dict[str, Any] = {"type": param.type or "string"}
-                if param.description:
-                    prop["description"] = param.description
-                if param.enum:
-                    prop["enum"] = param.enum
-                if param.minimum is not None:
-                    prop["minimum"] = param.minimum
-                if param.maximum is not None:
-                    prop["maximum"] = param.maximum
-                if param.default is not None:
-                    prop["default"] = param.default
-                properties[param.name] = prop
 
-                if param.required:
-                    required.append(param.name)
+def _runes_to_mcp_tool_manifest(runes: list[RuneSpec]) -> dict[str, Any]:
+    """Convert rune commands to an MCP ``tools/list`` compatible manifest."""
+    tools: list[dict[str, Any]] = []
+    for rune in runes:
+        for command in rune.commands:
+            tool_name = f"{rune.id.replace('/', '__')}__{command.name}"
+            risk_level = command.risk_level or rune.risk_level
+            requires_approval = command.requires_approval or rune.requires_approval
+            permissions = [str(getattr(permission, "value", permission)) for permission in rune.permissions]
+            execution_target = command.execution_target
+            side_effects = [str(effect) for effect in command.side_effects]
+            owasp_categories = command.owasp_categories or rune.owasp_categories
 
             tool: dict[str, Any] = {
-                "type": "function",
-                "function": {
-                    "name": f"{rune.id.replace('/', '__')}__{cmd.name}",
-                    "description": cmd.summary or f"{rune.name}: {cmd.name}",
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties,
-                    },
+                "name": tool_name,
+                "description": command.summary or f"{rune.name}: {command.name}",
+                "inputSchema": command_parameters_schema(command),
+                "_meta": {
+                    "grimoire.rune_id": rune.id,
+                    "grimoire.rune_name": rune.name,
+                    "grimoire.command_name": command.name,
+                    "grimoire.risk_level": risk_level.value,
+                    "grimoire.requires_approval": requires_approval,
+                    "grimoire.owasp_categories": [str(category) for category in owasp_categories],
+                    "grimoire.permissions": permissions,
+                    "grimoire.tags": [str(tag) for tag in rune.tags],
+                    "grimoire.side_effects": side_effects,
+                    "grimoire.tool_name": tool_name,
                 },
             }
-            if required:
-                tool["function"]["parameters"]["required"] = required
+            if execution_target:
+                tool["_meta"]["grimoire.execution_target"] = str(execution_target)
+            if rune.content_hash:
+                tool["_meta"]["grimoire.content_hash"] = rune.content_hash
+
+            destructive_permissions = {"write_fs", "exec"}
+            if side_effects or destructive_permissions.intersection(permissions):
+                tool["annotations"] = {
+                    "readOnlyHint": False,
+                    "destructiveHint": True,
+                }
+            else:
+                tool["annotations"] = {
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                }
 
             tools.append(tool)
-    return tools
+
+    return {
+        "schema_version": "grimoire.mcp_tool_manifest.v1",
+        "tools": tools,
+    }
+
+
+async def _search_procedural_retriever(
+    retriever: Any,
+    query: str,
+    *,
+    top_k: int,
+    filters: dict[str, Any] | None,
+) -> list[ProceduralSearchResult]:
+    if hasattr(retriever, "search"):
+        result = retriever.search(query, top_k=top_k, filters=filters)
+    elif hasattr(retriever, "retrieve"):
+        result = retriever.retrieve(query, top_k=top_k, filters=filters)
+    elif callable(retriever):
+        result = retriever(query, top_k=top_k, filters=filters)
+    else:
+        raise TypeError("procedural_retriever must expose search(), retrieve(), or be callable")
+
+    if inspect.isawaitable(result):
+        result = await result
+    if isinstance(result, list) and all(isinstance(r, ProceduralSearchResult) for r in result):
+        return result
+    return normalize_procedural_results(result)
+
+
+def _intent_filters(
+    *,
+    filter_domain: str | None,
+    filter_semantic_role: SemanticRole | str | None,
+    include_deprecated: bool,
+) -> dict[str, Any]:
+    filters: dict[str, Any] = {}
+    if filter_domain:
+        filters["domain"] = filter_domain
+    # Status and semantic-role filters are applied after resolving spells.
+    # Backend metadata operators vary, and role metadata may be comma-joined.
+    _ = filter_semantic_role, include_deprecated
+    return filters
+
+
+def _tool_filters(*, tags: list[str] | None) -> dict[str, Any]:
+    _ = tags
+    filters = {"artifact_type": "rune_command"}
+    return filters

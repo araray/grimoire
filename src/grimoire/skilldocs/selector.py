@@ -9,6 +9,7 @@ compatible with the llmcore ``SkillLoader`` section-filtering interface.
 from __future__ import annotations
 
 from grimoire.models import SkillDoc, SkillDocSection
+from grimoire.runes.schema import command_to_openai_tool_schema
 
 
 class SkillDocSelector:
@@ -129,32 +130,5 @@ class SkillDocSelector:
         tools = []
         for rune in runes:
             for cmd in rune.commands:
-                props: dict = {}
-                required_params: list[str] = []
-                for param in cmd.params:
-                    prop: dict = {"type": param.type or "string"}
-                    if param.description:
-                        prop["description"] = param.description
-                    if param.enum:
-                        prop["enum"] = param.enum
-                    if param.pattern:
-                        prop["pattern"] = param.pattern
-                    props[param.name] = prop
-                    if param.required:
-                        required_params.append(param.name)
-
-                tool = {
-                    "type": "function",
-                    "function": {
-                        "name": f"{rune.id.replace('/', '__')}__{cmd.name}",
-                        "description": cmd.summary or f"{rune.name}: {cmd.name}",
-                        "parameters": {
-                            "type": "object",
-                            "properties": props,
-                        },
-                    },
-                }
-                if required_params:
-                    tool["function"]["parameters"]["required"] = required_params
-                tools.append(tool)
+                tools.append(command_to_openai_tool_schema(cmd, rune))
         return tools

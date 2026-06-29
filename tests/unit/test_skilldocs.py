@@ -29,7 +29,6 @@ from grimoire.skilldocs.selector import SkillDocSelector
 from grimoire.store.repo import GrimoireRepo
 from grimoire.validate.rules import validate_skilldoc
 
-
 # ── Sample SkillDoc text ─────────────────────────────────────────────────────
 
 _SAMPLE_SKILLDOC = """\
@@ -254,14 +253,13 @@ class TestSkillDocSelector:
 
     def test_render_subset(self, doc: SkillDoc):
         sel = SkillDocSelector(doc)
-        sections = sel.by_id_list = [doc.sections[0]]
         text = sel.render([doc.sections[0]])
         assert "## branching" in text
         assert "rebase" not in text
 
     def test_openai_tool_schema(self):
         """render_to_openai_tool_schema produces valid OpenAI function definitions."""
-        from grimoire.models import CommandSpec, ParamSpec, RiskLevel, RuneSpec
+        from grimoire.models import CommandSpec, ParamSpec, RuneSpec
 
         rune = RuneSpec(
             id="devtools/git",
@@ -271,7 +269,19 @@ class TestSkillDocSelector:
                     name="status",
                     summary="Get repo status",
                     params=[
-                        ParamSpec(name="path", type="string", required=True, description="Repo path")
+                        ParamSpec(
+                            name="path",
+                            type="string",
+                            required=True,
+                            description="Repo path",
+                        ),
+                        ParamSpec(
+                            name="mode",
+                            type="string",
+                            enum=["short", "full"],
+                            default="short",
+                        ),
+                        ParamSpec(name="slug", type="string", pattern="^[a-z]+$"),
                     ],
                 )
             ],
@@ -281,8 +291,12 @@ class TestSkillDocSelector:
         assert len(tools) == 1
         assert tools[0]["type"] == "function"
         assert "devtools__git" in tools[0]["function"]["name"]
-        assert "path" in tools[0]["function"]["parameters"]["properties"]
-        assert tools[0]["function"]["parameters"]["required"] == ["path"]
+        params = tools[0]["function"]["parameters"]
+        assert "path" in params["properties"]
+        assert params["required"] == ["path"]
+        assert params["properties"]["mode"]["enum"] == ["short", "full"]
+        assert params["properties"]["mode"]["default"] == "short"
+        assert params["properties"]["slug"]["pattern"] == "^[a-z]+$"
 
 
 # ── Validation tests ──────────────────────────────────────────────────────────
@@ -315,9 +329,9 @@ class TestValidateSkillDoc:
         assert any(d.severity == Severity.WARNING for d in result.diagnostics)
 
     def test_duplicate_section_ids_error(self):
-        fm = {"id": "skills/dup", "name": "Dup"}
         # parser can't create duplicate IDs from headings, so build manually
         from grimoire.models import SkillDocSection
+
         doc = SkillDoc(
             id="skills/dup",
             name="Dup",

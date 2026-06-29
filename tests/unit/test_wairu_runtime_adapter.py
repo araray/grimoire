@@ -19,6 +19,7 @@ def test_wairu_tool_object_to_rune_preserves_runtime_metadata() -> None:
         parameters={"path": {"type": "string", "required": True, "description": "File path"}},
         requires_approval=True,
         risk_level="high",
+        owasp_categories=["LLM06_excessive_agency"],
         owasp=["A01:2021-Broken Access Control"],
     )
 
@@ -28,13 +29,19 @@ def test_wairu_tool_object_to_rune_preserves_runtime_metadata() -> None:
     assert rune.name == "shell.read_file"
     assert rune.risk_level is RiskLevel.HIGH
     assert rune.requires_approval is True
+    assert rune.owasp_categories == [
+        "LLM06_excessive_agency",
+        "A01:2021-Broken Access Control",
+    ]
     assert "plugin:shell" in rune.tags
+    assert "owasp:LLM06_excessive_agency" in rune.tags
     assert "owasp:A01:2021-Broken Access Control" in rune.tags
     assert rune.mappings["wairu.qualified_tool"] == "shell.read_file"
 
     command = rune.commands[0]
     assert command.name == "read_file"
     assert command.risk_level is RiskLevel.HIGH
+    assert command.owasp_categories == rune.owasp_categories
     assert command.requires_approval is True
     assert command.params[0].name == "path"
     assert command.params[0].required is True

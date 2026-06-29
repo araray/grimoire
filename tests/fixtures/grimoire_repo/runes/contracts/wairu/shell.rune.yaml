@@ -3,6 +3,7 @@ name: Wairu Shell Executor
 version: 1.0.0
 description: Execute shell commands via wairu's sandboxed executor.
 tags: [wairu, shell, exec]
+owasp_categories: [LLM06_excessive_agency]
 risk_level: high
 permissions: [exec, write_fs, read_fs]
 requires_approval: true
@@ -10,6 +11,7 @@ commands:
   - name: run
     summary: Execute a shell command in the wairu execution environment.
     risk_level: high
+    owasp_categories: [LLM05_supply_chain, LLM06_excessive_agency]
     requires_approval: true
     params:
       - name: command

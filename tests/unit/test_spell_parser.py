@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from grimoire.exceptions import SpellParseError, SpellValidationError
-from grimoire.models import MessageRole, VariableType
-from grimoire.spells.parser import parse_spell, parse_spell_file
+from grimoire.models import BlueprintStatus, MessageRole, SemanticRole, VariableType
+from grimoire.spells.parser import parse_spell, parse_spell_file, serialize_spell
 
 
 class TestSplitFrontmatter:
@@ -200,6 +200,47 @@ hello
         spell = parse_spell(text)
         assert spell.requires_runes == ["devtools/git"]
         assert spell.suggests_runes == ["devtools/cmake"]
+
+    def test_semantic_blueprint_round_trip(self) -> None:
+        text = """\
+---
+id: test/security_summary
+name: Security Summary
+description: Summarize a technical document preserving security details.
+intent_description: summarize a technical document for a security reviewer
+semantic_blueprint:
+  scene_goal: summarize a technical document for a security reviewer
+  participants:
+    - role: summarizer
+      semantic_role: Agent
+    - role: document
+      semantic_role: Patient
+      description: code, specs, or RFCs
+    - role: reviewer
+      semantic_role: Recipient
+      description: security-focused reviewer
+  action_to_complete: produce a concise security-focused summary
+  domain: summarization
+  keywords: [security, audit, risk]
+  status: active
+---
+
+# USER
+Summarize {{ document }}.
+"""
+        spell = parse_spell(text)
+
+        assert spell.intent_description == "summarize a technical document for a security reviewer"
+        assert spell.effective_intent == "summarize a technical document for a security reviewer"
+        assert spell.semantic_blueprint is not None
+        assert spell.semantic_blueprint.status == BlueprintStatus.ACTIVE
+        assert spell.semantic_blueprint.participants[1].semantic_role == SemanticRole.PATIENT
+        assert "Participant [Recipient]: reviewer" in spell.semantic_blueprint.to_retrieval_text()
+
+        reparsed = parse_spell(serialize_spell(spell))
+        assert reparsed.semantic_blueprint is not None
+        assert reparsed.semantic_blueprint.domain == "summarization"
+        assert reparsed.semantic_blueprint.keywords == ["security", "audit", "risk"]
 
 
 class TestParseSpellFile:

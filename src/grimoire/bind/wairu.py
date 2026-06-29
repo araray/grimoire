@@ -25,6 +25,7 @@ import yaml
 
 from grimoire.bind.base import Binder, BindFormat, BindResult, BindTarget, BoundFile
 from grimoire.models import CommandSpec, ParamSpec, Permission, RiskLevel, RuneSpec, Spell
+from grimoire.runes.schema import command_parameters_schema
 from grimoire.store.repo import GrimoireRepo
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,14 @@ def wairu_tool_to_rune(
     prefix = rune_id_prefix.strip("/") or "wairu/plugins"
     risk = _risk_level(_get_field(tool, "risk_level", None))
     requires_approval = _as_bool(_get_field(tool, "requires_approval", False))
+    owasp_categories = list(
+        dict.fromkeys(
+            [
+                *_as_str_list(_get_field(tool, "owasp_categories", [])),
+                *_as_str_list(_get_field(tool, "owasp", [])),
+            ]
+        )
+    )
 
     params = [
         _param_spec(name, schema, required)
@@ -170,11 +179,12 @@ def wairu_tool_to_rune(
         params=params,
         side_effects=_as_str_list(_get_field(tool, "side_effects", [])),
         risk_level=risk,
+        owasp_categories=owasp_categories,
         requires_approval=requires_approval,
         execution_target=_get_field(tool, "execution_target", None),
     )
 
-    owasp_tags = [f"owasp:{tag}" for tag in _as_str_list(_get_field(tool, "owasp", []))]
+    owasp_tags = [f"owasp:{tag}" for tag in owasp_categories]
     rune_tags = [
         "wairu",
         "plugin",
@@ -190,6 +200,7 @@ def wairu_tool_to_rune(
         version=version,
         description=description,
         tags=list(dict.fromkeys(rune_tags)),
+        owasp_categories=owasp_categories,
         platforms=_as_str_list(_get_field(tool, "platforms", ["any"])) or ["any"],
         risk_level=risk,
         permissions=_permissions(_get_field(tool, "permissions", [])),
@@ -278,43 +289,17 @@ def _rune_to_tool_pack(rune: RuneSpec) -> dict[str, Any]:
     tools: list[dict[str, Any]] = []
 
     for cmd in rune.commands:
-        # Build JSON-schema-style parameter definition
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-
-        for param in cmd.params:
-            prop: dict[str, Any] = {"type": param.type}
-            if param.description:
-                prop["description"] = param.description
-            if param.default is not None:
-                prop["default"] = param.default
-            if param.enum:
-                prop["enum"] = param.enum
-            if param.minimum is not None:
-                prop["minimum"] = param.minimum
-            if param.maximum is not None:
-                prop["maximum"] = param.maximum
-            properties[param.name] = prop
-
-            if param.required:
-                required.append(param.name)
-
         tool: dict[str, Any] = {
             "name": cmd.name,
             "description": cmd.summary or f"{rune.name}: {cmd.name}",
             "risk_level": (cmd.risk_level or rune.risk_level).value
             if (cmd.risk_level or rune.risk_level)
             else "low",
+            "owasp_categories": cmd.owasp_categories or rune.owasp_categories,
             "requires_approval": cmd.requires_approval or rune.requires_approval,
             "side_effects": cmd.side_effects,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-            },
+            "parameters": command_parameters_schema(cmd),
         }
-
-        if required:
-            tool["parameters"]["required"] = required
 
         # Examples
         if cmd.examples:
@@ -328,6 +313,7 @@ def _rune_to_tool_pack(rune: RuneSpec) -> dict[str, Any]:
         "version": rune.version,
         "description": rune.description,
         "tags": rune.tags,
+        "owasp_categories": rune.owasp_categories,
         "risk_level": rune.risk_level.value,
         "permissions": [p.value for p in rune.permissions],
         "platforms": rune.platforms,

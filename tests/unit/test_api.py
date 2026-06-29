@@ -23,7 +23,7 @@ import pytest
 
 from grimoire.api import Grimoire, _runes_to_openai_tools
 from grimoire.exceptions import ArtifactNotFoundError
-from grimoire.models import ConjuredPrompt, ConjuredRitualStep
+from grimoire.models import CommandSpec, ConjuredPrompt, ConjuredRitualStep, ParamSpec, RuneSpec
 
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 REPO_DIR = FIXTURES_DIR / "grimoire_repo"
@@ -135,9 +135,9 @@ class TestConjure:
             variables={"issue_title": "Bug", "symptoms": "crash"},
             context={"provider": "anthropic"},
         )
-        text = result.to_text()
         # Anthropic variant injects "style/concise" promptlet
         assert isinstance(result, ConjuredPrompt)
+        assert result.to_text()
 
     def test_conjure_ritual(self, grim: Grimoire) -> None:
         """conjure() on a ritual ID returns list of ConjuredRitualStep."""
@@ -347,8 +347,68 @@ class TestToolSchemas:
 
     def test_unsupported_format_raises(self, grim: Grimoire) -> None:
         """Unsupported schema_format raises ValueError."""
-        with pytest.raises(ValueError, match="(?i)unsupported"):
+        with pytest.raises(ValueError, match=r"(?i)unsupported"):
             grim.tool_schemas(schema_format="jsonschema")
+
+
+class TestMCPToolManifest:
+    """to_mcp_tool_manifest() exposes rune commands in MCP tools/list shape."""
+
+    def test_single_rune_manifest_shape(self, grim: Grimoire) -> None:
+        manifest = grim.to_mcp_tool_manifest("devtools/git")
+
+        assert manifest["schema_version"] == "grimoire.mcp_tool_manifest.v1"
+        tools = manifest["tools"]
+        assert {tool["name"] for tool in tools} == {
+            "devtools__git__status",
+            "devtools__git__diff",
+        }
+        status = next(tool for tool in tools if tool["name"] == "devtools__git__status")
+        assert status["description"] == "Show working tree status"
+        assert status["inputSchema"]["type"] == "object"
+        assert status["inputSchema"]["properties"]["porcelain"]["type"] == "boolean"
+        assert status["annotations"] == {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+        }
+        assert status["_meta"]["grimoire.rune_id"] == "devtools/git"
+        assert status["_meta"]["grimoire.command_name"] == "status"
+        assert status["_meta"]["grimoire.permissions"] == ["read_fs"]
+        assert status["_meta"]["grimoire.requires_approval"] is False
+        assert status["_meta"]["grimoire.risk_level"] == "low"
+
+    def test_manifest_preserves_risk_approval_and_execution_target(
+        self,
+        grim: Grimoire,
+    ) -> None:
+        rune = grim.get_rune("wairu/shell")
+        assert rune.mappings["wairu.tool_name"] == "shell"
+        assert rune.commands[0].execution_target == "sandbox"
+
+        manifest = grim.to_mcp_tool_manifest(rune_ids=["wairu/shell"])
+
+        tool = manifest["tools"][0]
+        assert tool["name"] == "wairu__shell__run"
+        assert tool["inputSchema"]["required"] == ["command"]
+        assert tool["annotations"] == {
+            "readOnlyHint": False,
+            "destructiveHint": True,
+        }
+        assert tool["_meta"]["grimoire.risk_level"] == "high"
+        assert tool["_meta"]["grimoire.requires_approval"] is True
+        assert tool["_meta"]["grimoire.owasp_categories"] == [
+            "LLM05_supply_chain",
+            "LLM06_excessive_agency",
+        ]
+        assert tool["_meta"]["grimoire.execution_target"] == "sandbox"
+        assert tool["_meta"]["grimoire.permissions"] == ["exec", "write_fs", "read_fs"]
+
+    def test_unknown_rune_ids_are_skipped(self, grim: Grimoire) -> None:
+        assert grim.to_mcp_tool_manifest(rune_ids=["missing/rune"])["tools"] == []
+
+    def test_rejects_single_and_multi_rune_selection(self, grim: Grimoire) -> None:
+        with pytest.raises(ValueError, match="either rune_id or rune_ids"):
+            grim.to_mcp_tool_manifest("devtools/git", rune_ids=["wairu/shell"])
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -572,6 +632,31 @@ class TestRunesToOpenAITools:
         for tool in tools:
             params = tool["function"]["parameters"]
             assert "properties" in params
+
+    def test_constraints_in_schema(self) -> None:
+        rune = RuneSpec(
+            id="devtools/check",
+            name="Check",
+            commands=[
+                CommandSpec(
+                    name="run",
+                    params=[
+                        ParamSpec(name="enabled", type="bool", default=True),
+                        ParamSpec(name="target", type="string", pattern="^[a-z]+$", required=True),
+                        ParamSpec(name="limit", type="integer", minimum=1, maximum=10),
+                    ],
+                )
+            ],
+        )
+        tool = _runes_to_openai_tools([rune])[0]
+        params = tool["function"]["parameters"]
+        props = params["properties"]
+        assert props["enabled"]["type"] == "boolean"
+        assert props["enabled"]["default"] is True
+        assert props["target"]["pattern"] == "^[a-z]+$"
+        assert props["limit"]["minimum"] == 1
+        assert props["limit"]["maximum"] == 10
+        assert params["required"] == ["target"]
 
     def test_multiple_runes(self, grim: Grimoire) -> None:
         runes = grim.list_runes()

@@ -143,6 +143,8 @@ class BundleAssembler:
             version=bundle.version,
             description=bundle.description,
             tags=bundle.tags,
+            intent_description=base_spell.intent_description,
+            semantic_blueprint=base_spell.semantic_blueprint,
             variables=assembled_vars,
             requires_runes=base_spell.requires_runes,
             suggests_runes=base_spell.suggests_runes,

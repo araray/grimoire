@@ -1,14 +1,15 @@
-# src/grimoire/spells/__init__.py
-"""Spell parsing and management."""
+"""Semantic blueprint models for spell intent discovery."""
 
-from .blueprint import (
+from __future__ import annotations
+
+from grimoire.models import (
     BlueprintParticipant,
     BlueprintStatus,
-    Participant,
     SemanticBlueprint,
     SemanticRole,
 )
-from .parser import parse_spell, parse_spell_file
+
+Participant = BlueprintParticipant
 
 __all__ = [
     "BlueprintParticipant",
@@ -16,6 +17,4 @@ __all__ = [
     "Participant",
     "SemanticBlueprint",
     "SemanticRole",
-    "parse_spell",
-    "parse_spell_file",
 ]
