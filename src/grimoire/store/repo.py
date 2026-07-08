@@ -83,13 +83,25 @@ class GrimoireRepo:
         runes = repo.list_runes(tags=["devtools"])
     """
 
-    def __init__(self, root: Path, manifest: GrimoireManifest, *, writable: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path,
+        manifest: GrimoireManifest,
+        *,
+        writable: bool = True,
+        strict: bool = False,
+    ) -> None:
         self.root = root
         self.manifest = manifest
         # Whether write operations (write/update/delete spell) are permitted on
         # this repo. Standalone repos default to writable; the layered overlay
         # system (LayeredGrimoire) marks shipped layers read-only.
         self.writable = writable
+        # Strict discovery: parse failures and duplicate ids RAISE instead of
+        # being logged-and-skipped. Used for fail-loud control-plane layers
+        # (llmcore/wairu load user overlays strict so a broken override aborts
+        # startup instead of silently shadowing nothing).
+        self.strict = strict
 
         self._spells: dict[str, Spell] = {}
         self._runes: dict[str, RuneSpec] = {}
@@ -102,7 +114,9 @@ class GrimoireRepo:
     # ── Factory ─────────────────────────────────────────────────────────────
 
     @classmethod
-    def load(cls, path: str | Path, *, writable: bool = True) -> "GrimoireRepo":
+    def load(
+        cls, path: str | Path, *, writable: bool = True, strict: bool = False
+    ) -> "GrimoireRepo":
         """
         Load a grimoire repo from disk.
 
@@ -110,19 +124,23 @@ class GrimoireRepo:
             path: Path to the grimoire root directory.
             writable: If ``False``, the repo rejects write/update/delete
                 operations (used for shipped/read-only overlay layers).
+            strict: If ``True``, any artifact parse failure or duplicate id
+                raises :class:`RepoError` (fail-loud) instead of the default
+                log-and-skip / log-and-overwrite behavior.
 
         Returns:
             Populated GrimoireRepo instance.
 
         Raises:
-            RepoError: If the path is invalid or loading fails.
+            RepoError: If the path is invalid, loading fails, or (with
+                ``strict=True``) any artifact fails to parse / collides.
         """
         root = Path(path).resolve()
         if not root.is_dir():
             raise RepoError(f"Not a directory: {root}")
 
         manifest = cls._load_manifest(root)
-        repo = cls(root, manifest, writable=writable)
+        repo = cls(root, manifest, writable=writable, strict=strict)
 
         repo._discover_promptlets()
         repo._discover_spells()
@@ -176,37 +194,61 @@ class GrimoireRepo:
                 logger.debug(f"Path not found, skipping: {full}")
         return resolved
 
+    def _on_parse_error(self, kind: str, file: Path, exc: Exception) -> None:
+        """Handle an artifact parse failure per the strictness policy.
+
+        Default: log and skip (historical behavior). Strict: raise
+        :class:`RepoError` naming the file and cause — the fail-loud mode
+        control-plane layers rely on.
+        """
+        if self.strict:
+            raise RepoError(f"Failed to parse {kind} {file}: {exc}") from exc
+        logger.error(f"Failed to parse {kind} {file}: {exc}")
+
+    def _on_duplicate(self, kind: str, artifact_id: str, file: Path) -> None:
+        """Handle a duplicate artifact id per the strictness policy.
+
+        Default: warn and let the later file win. With deterministic (sorted)
+        discovery the winner is stable: last in (path-list order, then
+        lexicographic file order). Strict: raise :class:`RepoError`.
+        """
+        if self.strict:
+            raise RepoError(f"Duplicate {kind} id '{artifact_id}' (second file: {file})")
+        logger.warning(f"Duplicate {kind} id '{artifact_id}', overwriting")
+
     def _discover_spells(self) -> None:
-        """Find and parse all *.spell.md files."""
+        """Find and parse all *.spell.md files (deterministic sorted order)."""
         dirs = self._resolve_paths(self.manifest.spell_paths)
         for d in dirs:
-            for spell_file in d.rglob("*.spell.md"):
+            for spell_file in sorted(d.rglob("*.spell.md")):
                 try:
                     spell = parse_spell_file(spell_file)
-                    if spell.id in self._spells:
-                        logger.warning(f"Duplicate spell id '{spell.id}', overwriting")
-                    self._spells[spell.id] = spell
                 except Exception as e:
-                    logger.error(f"Failed to parse spell {spell_file}: {e}")
+                    self._on_parse_error("spell", spell_file, e)
+                    continue
+                if spell.id in self._spells:
+                    self._on_duplicate("spell", spell.id, spell_file)
+                self._spells[spell.id] = spell
 
     def _discover_runes(self) -> None:
-        """Find and parse all *.rune.yaml files."""
+        """Find and parse all *.rune.yaml files (deterministic sorted order)."""
         dirs = self._resolve_paths(self.manifest.rune_paths)
         for d in dirs:
-            for rune_file in d.rglob("*.rune.yaml"):
+            for rune_file in sorted(d.rglob("*.rune.yaml")):
                 try:
                     rune = parse_rune_file(rune_file)
-                    if rune.id in self._runes:
-                        logger.warning(f"Duplicate rune id '{rune.id}', overwriting")
-                    self._runes[rune.id] = rune
                 except Exception as e:
-                    logger.error(f"Failed to parse rune {rune_file}: {e}")
+                    self._on_parse_error("rune", rune_file, e)
+                    continue
+                if rune.id in self._runes:
+                    self._on_duplicate("rune", rune.id, rune_file)
+                self._runes[rune.id] = rune
 
     def _discover_promptlets(self) -> None:
         """Find and load promptlet .md files (plain markdown, no frontmatter)."""
         dirs = self._resolve_paths(self.manifest.promptlet_paths)
         for d in dirs:
-            for md_file in d.rglob("*.md"):
+            for md_file in sorted(d.rglob("*.md")):
                 # Skip spell files
                 if md_file.name.endswith(".spell.md"):
                     continue
@@ -215,54 +257,60 @@ class GrimoireRepo:
                 promptlet_id = str(rel.with_suffix("")).replace("\\", "/")
                 try:
                     content = md_file.read_text(encoding="utf-8").strip()
-                    self._promptlets[promptlet_id] = Promptlet(
-                        id=promptlet_id,
-                        content=content,
-                        source_path=str(md_file),
-                    )
                 except Exception as e:
-                    logger.error(f"Failed to load promptlet {md_file}: {e}")
+                    self._on_parse_error("promptlet", md_file, e)
+                    continue
+                if promptlet_id in self._promptlets:
+                    self._on_duplicate("promptlet", promptlet_id, md_file)
+                self._promptlets[promptlet_id] = Promptlet(
+                    id=promptlet_id,
+                    content=content,
+                    source_path=str(md_file),
+                )
 
     def _discover_rituals(self) -> None:
-        """Find and parse all *.ritual.yaml files."""
+        """Find and parse all *.ritual.yaml files (deterministic sorted order)."""
         dirs = self._resolve_paths(self.manifest.ritual_paths)
         for d in dirs:
-            for ritual_file in d.rglob("*.ritual.yaml"):
+            for ritual_file in sorted(d.rglob("*.ritual.yaml")):
                 try:
                     ritual = parse_ritual_file(ritual_file)
-                    if ritual.id in self._rituals:
-                        logger.warning(f"Duplicate ritual id '{ritual.id}', overwriting")
-                    self._rituals[ritual.id] = ritual
                 except Exception as e:
-                    logger.error(f"Failed to parse ritual {ritual_file}: {e}")
+                    self._on_parse_error("ritual", ritual_file, e)
+                    continue
+                if ritual.id in self._rituals:
+                    self._on_duplicate("ritual", ritual.id, ritual_file)
+                self._rituals[ritual.id] = ritual
 
     def _discover_bundles(self) -> None:
-        """Find and parse all *.bundle.yaml files."""
+        """Find and parse all *.bundle.yaml files (deterministic sorted order)."""
         dirs = self._resolve_paths(self.manifest.bundle_paths)
         for d in dirs:
-            for bundle_file in d.rglob("*.bundle.yaml"):
+            for bundle_file in sorted(d.rglob("*.bundle.yaml")):
                 try:
                     bundle = parse_bundle_file(bundle_file)
-                    if bundle.id in self._bundles:
-                        logger.warning(f"Duplicate bundle id '{bundle.id}', overwriting")
-                    self._bundles[bundle.id] = bundle
                 except Exception as e:
-                    logger.error(f"Failed to parse bundle {bundle_file}: {e}")
+                    self._on_parse_error("bundle", bundle_file, e)
+                    continue
+                if bundle.id in self._bundles:
+                    self._on_duplicate("bundle", bundle.id, bundle_file)
+                self._bundles[bundle.id] = bundle
 
     def _discover_skilldocs(self) -> None:
-        """Find and parse all *.skilldoc.md files."""
+        """Find and parse all *.skilldoc.md files (deterministic sorted order)."""
         from grimoire.skilldocs.parser import parse_skilldoc_file
 
         dirs = self._resolve_paths(self.manifest.skilldoc_paths)
         for d in dirs:
-            for sd_file in d.rglob("*.skilldoc.md"):
+            for sd_file in sorted(d.rglob("*.skilldoc.md")):
                 try:
                     skilldoc = parse_skilldoc_file(sd_file)
-                    if skilldoc.id in self._skilldocs:
-                        logger.warning(f"Duplicate skilldoc id '{skilldoc.id}', overwriting")
-                    self._skilldocs[skilldoc.id] = skilldoc
                 except Exception as e:
-                    logger.error(f"Failed to parse skilldoc {sd_file}: {e}")
+                    self._on_parse_error("skilldoc", sd_file, e)
+                    continue
+                if skilldoc.id in self._skilldocs:
+                    self._on_duplicate("skilldoc", skilldoc.id, sd_file)
+                self._skilldocs[skilldoc.id] = skilldoc
 
     def _load_default_vars(self) -> None:
         """Load default variables from vars/defaults.yaml."""
@@ -273,7 +321,7 @@ class GrimoireRepo:
                 if isinstance(data, dict):
                     self._default_vars = data
             except Exception as e:
-                logger.error(f"Failed to load default vars: {e}")
+                self._on_parse_error("default vars", vars_path, e)
 
     # ── Accessors ───────────────────────────────────────────────────────────
 

@@ -5,6 +5,46 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — Layered Control Plane
+
+This release makes grimoire composable enough to serve as THE single prompt/
+tool/skill control plane for llmcore and wairu: a builtin (shipped) pack, an
+optional admin overlay, and a user overlay compose into one deterministic
+view for **every** artifact type.
+
+### Added
+- **`Grimoire.layered(roots)`** — build the facade over ordered
+  `(name, path, writable)` layers (lowest → highest precedence). All facade
+  APIs (conjure, tool_schemas, catalog, bind, validate, intent search)
+  resolve through the composed view.
+- **`CompositeRepoView`** — a read-only merged `GrimoireRepo` over layers,
+  covering ALL artifact types (spells, runes, promptlets, rituals, bundles,
+  skilldocs, default vars). Duck-type compatible with every existing
+  consumer, including in-memory runtime rune registration (runtime runes
+  drop on `reload()` by documented design).
+- **`LayeredGrimoire`** extended beyond spells: typed `get_*`/`list_*` for
+  all artifact types, per-key `default_vars` merge, and a generalized
+  `resolve_layer(artifact_id, kind)`.
+- **Strict repo loading** — `GrimoireRepo.load(..., strict=True)` raises
+  `RepoError` on artifact parse failures and duplicate ids (fail-loud mode
+  for control-plane overlays); `LayeredGrimoire.from_roots(..., strict=True)`
+  names the failing layer.
+- **`Grimoire.validate(layer=...)`** — validate a single layer in isolation
+  (startup validation of user overlays).
+- **Caches** — static host/git conjure builtins are computed once per engine
+  (previously two `git` subprocesses on *every* conjure); `catalog()` and
+  unfiltered `tool_schemas()` are memoized with `invalidate_caches()` (called
+  automatically on `reload()` and by runtime rune registration).
+
+### Changed
+- **Deterministic discovery** — artifact discovery is now `sorted()`; the
+  duplicate-id winner is stable (path-list order, then lexicographic file
+  order) instead of filesystem-dependent.
+- **`grimoire.federation` imports llmcore lazily** (PEP 562) and the llmcore
+  requirement is declared as the `federation` extra — grimoire's core has no
+  llmcore dependency, so llmcore can hard-depend on grimoire with no import
+  cycle.
+
 ## [0.3.0] — Procedural Tools, MCP Server, Federation & OWASP Auditing
 
 This release turns grimoire into a stronger prompt and tool control plane:
