@@ -11,6 +11,7 @@ This document is the definitive reference for integrating Grimoire into your Pyt
 - [Quick Start](#quick-start)
 - [The Grimoire Facade](#the-grimoire-facade)
   - [Construction](#construction)
+  - [Layered Control Plane](#layered-control-plane)
   - [Conjuring Prompts](#conjuring-prompts)
   - [Variable Introspection](#variable-introspection)
   - [Tool Schema Generation](#tool-schema-generation)
@@ -18,6 +19,9 @@ This document is the definitive reference for integrating Grimoire into your Pyt
   - [Validation & Linting](#validation--linting)
   - [Catalog & Discovery](#catalog--discovery)
   - [Convenience Accessors](#convenience-accessors)
+  - [Intent Discovery](#intent-discovery)
+  - [MCP Tool Manifest & Server](#mcp-tool-manifest--server)
+  - [OWASP Metadata & Federation](#owasp-metadata--federation)
 - [Output Formats](#output-formats)
 - [Provenance Tracking](#provenance-tracking)
 - [Lower-Level Components](#lower-level-components)
@@ -37,6 +41,7 @@ This document is the definitive reference for integrating Grimoire into your Pyt
 - [Architecture](#architecture)
 - [Thread Safety & Performance](#thread-safety--performance)
 - [Type Reference](#type-reference)
+- [Feature Notes by Version](#feature-notes-by-version)
 
 ---
 
@@ -89,6 +94,8 @@ g = Grimoire("/path/to/repo", strict=False)
 
 Construction loads the repository, indexes all artifacts, wires the conjure engine with all discovered promptlets and runes, and prepares the bundle assembler. Typical load time is under 50ms for repositories with hundreds of artifacts.
 
+Optional keyword arguments: `procedural_retriever` / `procedural_indexer` (a semantiscan-compatible retriever/indexer for [intent discovery](#intent-discovery); without them an in-memory fallback is used). To compose several repositories into one view, use [`Grimoire.layered(...)`](#layered-control-plane) instead of the constructor.
+
 #### Reloading after disk changes
 
 ```python
@@ -103,6 +110,70 @@ g.name       # → "my-grimoire"  (from grimoire.yaml)
 g.version    # → "1.0.0"
 g.repo       # → GrimoireRepo instance (read-only access to internals)
 ```
+
+#### Properties in layered mode
+
+```python
+g.layers            # → ["builtin", "admin", "user"]  (None for a single-root facade)
+g.resolve_layer("agent/system", kind="spell")   # → "user"
+g.invalidate_caches()   # drop memoized catalog()/tool_schemas() (reload() does this for you)
+```
+
+---
+
+### Layered Control Plane
+
+`Grimoire.layered(roots)` (0.4.0) builds the facade over **ordered overlay layers** —
+lowest → highest precedence, highest wins — so a shipped, read-only pack can be
+extended or overridden by admin and user overlays without touching shipped files.
+This is how llmcore and wairu compose their prompt/tool control plane
+(`llmcore-builtin < wairu-core < user`).
+
+```python
+from grimoire import Grimoire
+
+g = Grimoire.layered(
+    [
+        ("builtin", "/opt/app/grimoire",     False),   # read-only
+        ("admin",   "/etc/app/grimoire",      True),   # writable overlay
+        ("user",    "~/.config/app/grimoire", True),   # writable, highest precedence
+    ],
+    strict=True,            # conjure strictness (missing required variables raise)
+    load_strict=True,       # fail-loud loading (see below)
+    scaffold_writable=True, # create missing writable layer roots
+)
+```
+
+What the composed view gives you:
+
+- **Every artifact type** resolves through the layers: spells, promptlets, runes,
+  rituals, bundles, skilldocs, and `vars/defaults.yaml` (merged per key). All facade
+  APIs — `conjure`, `tool_schemas`, `catalog`, `bind`, `validate`, `lint`, intent
+  search, the MCP manifest — operate on the composed `CompositeRepoView`, which is
+  duck-type compatible with `GrimoireRepo` (including in-memory runtime rune
+  registration; runtime runes are dropped on `reload()` by design).
+- **Deterministic precedence** — discovery is sorted, so the winner for a duplicated
+  id is stable across machines (layer order first, then path-list order, then file
+  name).
+- **Strict loading** (`load_strict=True`, the default) — a parse failure or a
+  duplicate id *inside* a layer raises `RepoError` naming the layer, instead of
+  log-and-skip. Use this for control-plane overlays so a broken user file fails at
+  startup.
+- **Per-layer validation** — `g.validate(layer="user")` validates one layer's repo
+  in isolation (an overlay that merely shadows artifacts must still be valid on its
+  own). `validate()` without `layer` validates the composed view.
+- **Writes** — `write_spell` / `update_spell` / `delete_spell` target the highest
+  writable layer (or a named one via the underlying `LayeredGrimoire`:
+  `g._layered.write_spell(spell, layer="admin")`). Deleting an overlay artifact
+  un-shadows the lower definition.
+- **Caches** — `catalog()` and unfiltered `tool_schemas()` are memoized; static
+  host/git conjure builtins are computed once per engine (no `git` subprocess per
+  conjure). `reload()` and runtime rune registration invalidate the caches;
+  `invalidate_caches()` does it manually.
+
+The lower-level `LayeredGrimoire` / `GrimoireLayer` / `CompositeRepoView` classes are
+exported from the package for callers that need typed per-layer access
+(`get_*`/`list_*` for all artifact types, `writable_layers`, `composite_view()`).
 
 ---
 
@@ -363,6 +434,73 @@ devtools = g.list_runes(tags=["devtools"])
 all_bundles = g.list_bundles()
 all_rituals = g.list_rituals()
 ```
+
+---
+
+### Intent Discovery
+
+Find artifacts from a natural-language intent instead of hard-coding ids (0.3.0). Both
+methods are `async`. With no retriever configured they use a deterministic token-overlap
+ranking over the in-memory catalog; pass a semantiscan-compatible
+`procedural_retriever` (and `procedural_indexer` for `rebuild_procedural_index()`) to
+rank with embeddings.
+
+```python
+hits = await g.find_by_intent(
+    "summarize a pull request for reviewers",
+    top_k=3, filter_domain=None, filter_semantic_role=None, include_deprecated=False,
+)
+for m in hits:                      # IntentMatch(spell, score, highlight)
+    print(m.spell.id, m.score, m.highlight)
+
+tools = await g.find_tools_by_intent(
+    "run the unit tests and report failures",
+    top_k=5, tags=None, max_risk="medium", include_requires_approval=True,
+)
+for m in tools:                     # ToolIntentMatch(rune, command, score, highlight)
+    print(m.rune.id, m.command.name, m.score)
+
+await g.rebuild_procedural_index()  # (re)index spells + rune commands in the retriever
+```
+
+---
+
+### MCP Tool Manifest & Server
+
+Rune commands can be published to MCP clients (0.3.0).
+
+```python
+manifest = g.to_mcp_tool_manifest(tags=["devtools"])        # or rune_id=... / rune_ids=[...]
+manifest["schema_version"]
+manifest["tools"]      # MCP tools/list entries: name, description, inputSchema, and a
+                       # per-tool "_meta" block (rune id, command, risk level, approval,
+                       # OWASP categories, execution target, content hash) for routing
+```
+
+The bundled server (`pip install "grimoire[mcp]"`) wraps the same manifest in a
+FastAPI JSON-RPC endpoint with bearer-token auth:
+
+```bash
+GRIMOIRE_MCP_TOKEN=change-me grimoire mcp serve --host 127.0.0.1 --port 8765 --endpoint /mcp
+```
+
+Methods: `initialize`, `tools/list`, `tools/call`, `prompts/list`, `prompts/get`;
+`GET /health` is unauthenticated. Programmatic embedding:
+`grimoire.mcp_server.server.build_app(g, auth_token=..., endpoint_path="/mcp", tool_callables={...}, allowed_tools=[...])` returns the FastAPI app (`tool_callables` maps tool names to the functions `tools/call` dispatches to).
+
+---
+
+### OWASP Metadata & Federation
+
+Rune contracts accept `owasp_categories` at rune level and per command (OWASP LLM
+Top-10 ids such as `LLM01`). The metadata is preserved through parsing, carried into
+binder and MCP exports, and auditable with `grimoire rune audit [--require-owasp]`.
+
+`grimoire.federation` (extra `federation`, which pulls in `llmcore`) adapts MCP
+requests/responses/tool calls and rune command executions into llmcore's shared
+ecosystem event envelope: `federate_mcp_request`, `federate_mcp_response`,
+`federate_mcp_tool_call`, `federate_rune_command`, `federate_rune_commands`. The module
+imports llmcore lazily, so grimoire's core has no llmcore dependency.
 
 ---
 
@@ -770,7 +908,7 @@ conjure("bundles/engineering/rca_with_tools", variables={...}, context={...})
 
 A `Grimoire` instance is safe for concurrent reads: multiple threads can call `conjure()`, `tool_schemas()`, `catalog()`, etc. simultaneously without locking.
 
-It is **not** safe for concurrent mutation. If the repository files change on disk, call `g.reload()` from a single thread before subsequent reads.
+It is **not** safe for concurrent mutation. If the repository files change on disk, call `g.reload()` from a single thread before subsequent reads. `catalog()` and unfiltered `tool_schemas()` are memoized (invalidated by `reload()`, runtime rune registration, or `invalidate_caches()`), and conjure builtins that shell out to `git` are computed once per engine.
 
 Performance characteristics:
 - **Construction**: ~20–50ms for a typical repository (hundreds of artifacts)
@@ -787,7 +925,9 @@ Performance characteristics:
 
 | Type | Module | Description |
 |------|--------|-------------|
-| `Grimoire` | `grimoire.api` | High-level facade |
+| `Grimoire` | `grimoire.api` | High-level facade (single root or `Grimoire.layered(...)`) |
+| `LayeredGrimoire` / `GrimoireLayer` / `CompositeRepoView` | `grimoire.layered` | Ordered overlay composition over `GrimoireRepo` |
+| `IntentMatch` / `ToolIntentMatch` | `grimoire.procedural` | Results of `find_by_intent` / `find_tools_by_intent` |
 | `GrimoireRepo` | `grimoire.store.repo` | Repository loader |
 | `ConjureEngine` | `grimoire.conjure.engine` | Rendering engine |
 | `BundleAssembler` | `grimoire.bundles.assembler` | Bundle materializer |
@@ -843,9 +983,19 @@ from grimoire import (
 
 ---
 
-## v0.2.0 — Attributes, Tag Search, Write API, Layered Overlays
+## Feature Notes by Version
 
-### Opaque spell attributes (WS-G4)
+### 0.4.0 — Layered control plane
+
+See [Layered Control Plane](#layered-control-plane): `Grimoire.layered()`, `CompositeRepoView` over every artifact type, strict loading, `validate(layer=...)`, deterministic discovery, memoized catalog/tool schemas, lazy llmcore import in `grimoire.federation`.
+
+### 0.3.0 — Procedural discovery, MCP, federation, OWASP
+
+See [Intent Discovery](#intent-discovery), [MCP Tool Manifest & Server](#mcp-tool-manifest--server) and [OWASP Metadata & Federation](#owasp-metadata--federation); rune command schema helpers live in `grimoire.runes.schema` (`command_to_openai_tool_schema`, `command_parameters_schema`).
+
+### 0.2.0 — Attributes, Tag Search, Write API, Layered Overlays
+
+#### Opaque spell attributes (WS-G4)
 
 `Spell.attributes` is a declared, opaque `dict[str, Any]` that grimoire stores
 and serves verbatim but never interprets. It lets a downstream application
@@ -869,7 +1019,7 @@ You are a relentless skeptic.
 `attributes` is **excluded from `content_hash`** (it is metadata, not prompt
 body), so editing it does not register as prompt drift.
 
-### Tag vocabulary & search (WS-G3)
+#### Tag vocabulary & search (WS-G3)
 
 ```python
 g = Grimoire("/path/to/repo")
@@ -889,7 +1039,7 @@ g.search_spells("review", fields=("name", "description"))
 `match="all"|"any"` is available on every `list_*` method (spells, runes,
 rituals, bundles, skilldocs).
 
-### Spell write API + serializer (WS-G1)
+#### Spell write API + serializer (WS-G1)
 
 ```python
 from grimoire import Grimoire, Spell, MessageBlock, MessageRole, serialize_spell
@@ -914,7 +1064,7 @@ text = serialize_spell(spell)          # canonical .spell.md (round-trips with p
 `GrimoireRepo.load(path, writable=False)` produces a read-only repo whose
 write/delete operations raise `RepoError`.
 
-### Layered overlays (WS-G2)
+#### Layered overlays (WS-G2)
 
 `LayeredGrimoire` composes ordered repos so a read-only *shipped* library can be
 overridden by writable *admin* / *user* overlays without mutating shipped files:

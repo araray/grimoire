@@ -36,7 +36,9 @@ This guide covers every feature: artifact formats, CLI commands, the library API
 ### Install
 
 ```bash
-pip install -e ".[dev]"
+pip install "grimoire @ git+https://github.com/araray/grimoire.git@v0.4.0"
+# extras: [mcp] for the MCP server, [federation] for llmcore event adapters
+# from a checkout: pip install -e ".[dev]"
 ```
 
 ### Create a grimoire
@@ -55,10 +57,10 @@ This creates a skeleton with a manifest (`grimoire.yaml`), a starter spell, a st
 grimoire spell list
 
 # Conjure the starter spell
-grimoire conjure examples/hello --set name=Alice
+grimoire --set name=Alice conjure examples/hello
 
 # Same thing, but as OpenAI messages
-grimoire --format openai conjure examples/hello --set name=Alice
+grimoire --set name=Alice --format openai conjure examples/hello
 ```
 
 ---
@@ -374,6 +376,9 @@ Type-aware prompting: booleans get yes/no, choices get a numbered menu, multilin
 
 ### Global options
 
+Global options belong to the top-level `grimoire` command and must be given **before** the
+subcommand: `grimoire --set name=Alice --format openai conjure examples/hello`.
+
 ```
 --repo PATH          Grimoire repo root (default: cwd)
 --profile NAME       Profile overlay (repeatable, merged in order)
@@ -442,19 +447,31 @@ grimoire rune validate                   # Validate all runes
 grimoire rune validate devtools/git      # Validate specific
 ```
 
+### `grimoire rune audit`
+
+Report OWASP LLM Top-10 metadata coverage across rune commands (rune-level and per-command
+`owasp_categories`).
+
+```bash
+grimoire rune audit                          # coverage table
+grimoire rune audit --filter-owasp LLM01     # only commands tagged with a category
+grimoire rune audit --require-owasp          # exit non-zero if a high-risk command lacks metadata (CI gate)
+grimoire rune audit --json
+```
+
 ### `grimoire conjure <artifact_id>`
 
 Renders spells, bundles, or rituals into final messages.
 
 ```bash
 # Spell conjuring
-grimoire conjure examples/greet --set user_name=Alice
+grimoire --set user_name=Alice conjure examples/greet
 grimoire --format openai conjure engineering/rca --vars incident.yaml
-grimoire --format json conjure engineering/rca --set issue_title="Bug" --provenance
-grimoire --out prompt.md conjure engineering/rca --set issue_title="Bug" --set symptoms="crash"
+grimoire --set issue_title="Bug" --format json conjure engineering/rca --provenance
+grimoire --set issue_title="Bug" --set symptoms="crash" --out prompt.md conjure engineering/rca
 
 # Bundle conjuring (auto-detected by ID prefix)
-grimoire conjure bundles/engineering/rca_with_tools --set issue_title="Bug" --set symptoms="crash"
+grimoire --set issue_title="Bug" --set symptoms="crash" conjure bundles/engineering/rca_with_tools
 
 # Interactive mode
 grimoire conjure engineering/rca --ask-missing
@@ -485,6 +502,8 @@ grimoire bundle assemble bundles/engineering/rca_with_tools --context provider=a
 ```
 
 ### `grimoire skill list|show|validate|docs|export`
+
+`skill export --to openai-tool-schema|llmcore-activities|wairu-tools [--tag TAG] [--out FILE]` exports rune contracts; `skill docs <id> --sections tag1,tag2` renders a SkillDoc filtered by section tags; `skill list --type docs|contracts|all`.
 
 ```bash
 grimoire skill list                        # List all (runes + skilldocs)
@@ -544,6 +563,24 @@ grimoire sync drift --target wairu        # Detect drift vs wairu
 grimoire sync drift --target all --json   # Drift for all targets
 ```
 
+`from-*` importers accept `--out PATH` (default `runes/contracts/<runtime>/`), `--overwrite`
+and `--json`; `drift` compares content hashes of the canonical artifacts against what the
+runtime currently serves.
+
+### `grimoire mcp serve`
+
+Serve runes as MCP tools and spells as MCP prompts over JSON-RPC (requires the `mcp` extra).
+
+```bash
+export GRIMOIRE_MCP_TOKEN=change-me
+grimoire mcp serve                                  # 127.0.0.1:8765, endpoint /mcp
+grimoire mcp serve --host 0.0.0.0 --port 9000 --endpoint /rpc --token "$GRIMOIRE_MCP_TOKEN"
+```
+
+Every request needs `Authorization: Bearer <token>`. Supported methods: `initialize`,
+`tools/list`, `tools/call`, `prompts/list`, `prompts/get`; `GET /health` is unauthenticated.
+The tool manifest is the same one `Grimoire.to_mcp_tool_manifest()` returns.
+
 ### `grimoire doctor`
 
 ```bash
@@ -554,7 +591,7 @@ grimoire doctor    # Diagnose repo issues (broken includes, schema violations, e
 
 ## Library API (Live-Bind)
 
-The `Grimoire` facade provides the single-entry-point API for programmatic access. For the comprehensive library integration guide with patterns, recipes, and architecture diagrams, see **[LIBRARY.md](LIBRARY.md)**.
+The `Grimoire` facade provides the single-entry-point API for programmatic access. For the comprehensive library integration guide with patterns, recipes, and architecture diagrams, see **[AS_LIBRARY.md](AS_LIBRARY.md)**.
 
 ```python
 from grimoire import Grimoire
@@ -650,6 +687,36 @@ my-grimoire/
     golden/                    # Golden test outputs
   exports/                     # Generated artifacts (gitignored)
 ```
+
+---
+
+## Layered Control Plane
+
+Since 0.4.0 a grimoire can be composed from **ordered layers** — typically a shipped,
+read-only pack, an optional admin overlay and a writable user overlay. Reads resolve
+highest-precedence-first for *every* artifact type (spells, promptlets, runes, rituals,
+bundles, skilldocs and `vars/defaults.yaml`); writes go to the highest writable layer;
+deleting an overlay artifact un-shadows the one below.
+
+```python
+from grimoire import Grimoire
+
+g = Grimoire.layered([
+    ("builtin", "/opt/app/grimoire",       False),
+    ("admin",   "/etc/app/grimoire",        True),
+    ("user",    "~/.config/app/grimoire",   True),   # scaffolded on first use
+])
+g.layers                              # ['builtin', 'admin', 'user']
+g.resolve_layer("agent/system")       # which layer wins for an id
+g.validate(layer="user")              # validate a single overlay in isolation
+g.reload()                            # re-read every layer (drops runtime-registered runes)
+```
+
+Layers load **strictly** by default: a malformed artifact or a duplicate id inside a layer
+raises `RepoError` naming the layer, so a broken user overlay fails at startup instead of
+silently disappearing. Discovery order is deterministic (sorted), so the duplicate-id
+winner is stable across machines. See [AS_LIBRARY.md](AS_LIBRARY.md#layered-control-plane)
+for the full API.
 
 ---
 
