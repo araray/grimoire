@@ -50,7 +50,7 @@ view for **every** artifact type.
 This release turns grimoire into a stronger prompt and tool control plane:
 rune command schemas are exportable, spells and rune commands are discoverable
 by intent, and a JSON-RPC MCP server exposes rune tools and prompt endpoints
-to external runtimes. See `release_notes.md` for the full narrative.
+to external runtimes.
 
 ### Added — Rune command schema export
 - `runes/schema.py`: centralized `param_to_json_schema`,
@@ -158,7 +158,10 @@ added (593 total).
 - Pre-existing lint findings in untouched test files (`test_api.py`,
   `test_bundles.py`) are left as-is per minimal-change discipline.
 
-## [Unreleased] — Phase 3 + Quick Wins + Live-Bind API
+## [0.1.0] — Phases 0–3, Quick Wins, Live-Bind API
+
+(Initial line: Phase 0 skeleton, Phase 1 CLI MVP, Phase 2 binding targets,
+Phase 3 rituals, quick wins, and the live-bind facade — listed newest first.)
 
 ### Added — Live-Bind API (spec §10.2, §12)
 
