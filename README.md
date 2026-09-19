@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/logo_dark_grimoire.png">
+    <img src="assets/branding/logo_light_grimoire.png" alt="grimoire" width="720">
+  </picture>
+</p>
+
 # Grimoire
 
 **Prompt & tool control plane for LLM applications.**
