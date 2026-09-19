@@ -10,9 +10,47 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import asdict, is_dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from llmcore.observability.federation import EcosystemEvent, SourceSystem
+if TYPE_CHECKING:  # pragma: no cover - annotations only
+    from llmcore.observability.federation import EcosystemEvent, SourceSystem
+
+# The llmcore federation types (EcosystemEvent, SourceSystem) are imported
+# LAZILY at first use (0.4.0). Grimoire's core has NO llmcore dependency —
+# llmcore depends on grimoire, and the old eager import here was the one edge
+# of a potential import cycle. The envelope is an opt-in extra:
+# `pip install grimoire[federation]`.
+_TYPES_CACHE: tuple[Any, Any] | None = None
+
+
+def _federation_types() -> tuple[Any, Any]:
+    """Import and cache (EcosystemEvent, SourceSystem), or raise clearly."""
+    global _TYPES_CACHE
+    if _TYPES_CACHE is not None:
+        return _TYPES_CACHE
+    try:
+        from llmcore.observability.federation import (
+            EcosystemEvent as _EcosystemEvent,
+        )
+        from llmcore.observability.federation import (
+            SourceSystem as _SourceSystem,
+        )
+    except ImportError as e:  # pragma: no cover - environment-dependent
+        raise ImportError(
+            "grimoire.federation requires llmcore — install the "
+            "'grimoire[federation]' extra (grimoire's core has no llmcore "
+            "dependency; llmcore depends on grimoire)"
+        ) from e
+    _TYPES_CACHE = (_EcosystemEvent, _SourceSystem)
+    return _TYPES_CACHE
+
+
+def __getattr__(name: str) -> Any:
+    """Serve the re-exported llmcore types lazily (PEP 562)."""
+    if name in ("EcosystemEvent", "SourceSystem"):
+        event_cls, source_cls = _federation_types()
+        return event_cls if name == "EcosystemEvent" else source_cls
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def federate_mcp_request(
@@ -22,6 +60,8 @@ def federate_mcp_request(
     source_component: str = "mcp.server",
 ) -> EcosystemEvent:
     """Normalize a Grimoire MCP JSON-RPC request."""
+
+    EcosystemEvent, SourceSystem = _federation_types()
 
     data = _mapping(request)
     method = _string_value(data.get("method")) or "unknown"
@@ -53,6 +93,8 @@ def federate_mcp_response(
     source_component: str = "mcp.server",
 ) -> EcosystemEvent:
     """Normalize a Grimoire MCP JSON-RPC response."""
+
+    EcosystemEvent, SourceSystem = _federation_types()
 
     data = _mapping(response)
     error = data.get("error")
@@ -88,6 +130,8 @@ def federate_mcp_tool_call(
     source_component: str = "mcp.executor",
 ) -> EcosystemEvent:
     """Normalize a Grimoire MCP tool-call attempt or result."""
+
+    EcosystemEvent, SourceSystem = _federation_types()
 
     meta = tool.get("_meta") if isinstance(tool.get("_meta"), dict) else {}
     result_meta = result.get("_meta") if isinstance(result, dict) and isinstance(result.get("_meta"), dict) else {}
@@ -129,6 +173,8 @@ def federate_rune_command(
     source_component: str = "runes.registry",
 ) -> EcosystemEvent:
     """Normalize one Grimoire rune command contract."""
+
+    EcosystemEvent, SourceSystem = _federation_types()
 
     rune_data = _mapping(rune)
     command_data = _mapping(command)

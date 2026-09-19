@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "grimoire"
-version = "0.3.0"
+version = "0.4.0"
 description = "Prompt & tool control plane for the llmcore ecosystem — spells, rituals, runes."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -41,6 +41,13 @@ dependencies = [
 mcp = [
     "fastapi>=0.110.0",
     "uvicorn>=0.29.0",
+]
+# grimoire.federation adapts rune/MCP surfaces to llmcore's ecosystem event
+# envelope. Declared (not installed by default) because the hard dependency
+# edge in the ecosystem points the other way: llmcore depends on grimoire.
+# llmcore is not on PyPI — install from GitHub when enabling this extra.
+federation = [
+    "llmcore>=0.52.0",
 ]
 test = [
     "pytest>=7.0.0",

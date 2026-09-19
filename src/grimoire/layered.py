@@ -39,10 +39,30 @@ from pathlib import Path
 import yaml
 
 from grimoire.exceptions import ArtifactNotFoundError, RepoError
-from grimoire.models import Spell
+from grimoire.models import (
+    Bundle,
+    GrimoireManifest,
+    Promptlet,
+    Ritual,
+    RuneSpec,
+    SkillDoc,
+    Spell,
+)
 from grimoire.store.repo import GrimoireRepo, _tag_match, _validate_match
 
 logger = logging.getLogger(__name__)
+
+#: Artifact kinds resolvable across layers, mapped to the GrimoireRepo private
+#: index attribute that stores them. This is the single source of truth for
+#: which artifact types participate in layering (0.4.0: ALL of them).
+_ARTIFACT_ATTRS: dict[str, str] = {
+    "spell": "_spells",
+    "rune": "_runes",
+    "promptlet": "_promptlets",
+    "ritual": "_rituals",
+    "bundle": "_bundles",
+    "skilldoc": "_skilldocs",
+}
 
 
 @dataclass
@@ -61,6 +81,90 @@ class GrimoireLayer:
     name: str
     repo: GrimoireRepo
     writable: bool = False
+
+
+class CompositeRepoView(GrimoireRepo):
+    """
+    Read-only merged view over ordered grimoire layers (0.4.0, WS-G2b).
+
+    Presents the layered composition as a single object satisfying the full
+    :class:`GrimoireRepo` duck type — so every existing consumer
+    (``ConjureEngine`` wiring, ``BundleAssembler``, ``RitualEvaluator``,
+    ``validate_repo``, binders, and wairu's ``register_wairu_plugin_tools``,
+    which mutates ``_runes`` in-memory) works unchanged against a layered
+    facade.
+
+    Semantics:
+        - Merged indexes are materialized at construction: layers are folded
+          lowest → highest precedence, higher layers overwriting by id.
+          ``default_vars`` merge per-key (higher layer key wins).
+        - The merged indexes are **real mutable dicts**: in-memory runtime
+          registration (e.g. runtime runes) lands in this view only and is
+          lost on :meth:`refresh` / facade ``reload()`` — identical semantics
+          to today's single-repo facade.
+        - Writes are rejected (``writable=False``); use
+          :class:`LayeredGrimoire` write APIs, which target a writable layer,
+          then :meth:`refresh`.
+        - ``root`` is the highest-precedence layer's root (informational);
+          ``manifest`` is synthesized from the layer stack.
+    """
+
+    def __init__(self, layers: Sequence[GrimoireLayer]) -> None:
+        if not layers:
+            raise ValueError("CompositeRepoView requires at least one layer")
+        top = layers[-1].repo
+        manifest = GrimoireManifest(
+            name="+".join(layer.name for layer in layers),
+            version=top.manifest.version,
+        )
+        super().__init__(top.root, manifest, writable=False)
+        self._layers: list[GrimoireLayer] = list(layers)
+        self.refresh()
+
+    def refresh(self) -> None:
+        """Rebuild the merged indexes from the current layer repos.
+
+        Discards any in-memory runtime registrations made directly on this
+        view (documented semantics — callers that register runtime artifacts
+        must replay them after a refresh/reload).
+        """
+        for attr in _ARTIFACT_ATTRS.values():
+            merged: dict[str, object] = {}
+            for layer in self._layers:  # low → high; later overrides
+                merged.update(getattr(layer.repo, attr))
+            setattr(self, attr, merged)
+        merged_vars: dict[str, object] = {}
+        for layer in self._layers:
+            merged_vars.update(layer.repo._default_vars)
+        self._default_vars = merged_vars
+
+    def resolve_layer(self, artifact_id: str, kind: str = "spell") -> str:
+        """Name of the layer an artifact resolves from (highest wins).
+
+        Note: artifacts registered at runtime directly on this view (present
+        in the merged index but in no layer) report ``"(runtime)"``.
+
+        Raises:
+            ValueError: On an unknown ``kind``.
+            ArtifactNotFoundError: If no layer (nor the view) defines the id.
+        """
+        attr = _artifact_attr(kind)
+        for layer in reversed(self._layers):
+            if artifact_id in getattr(layer.repo, attr):
+                return layer.name
+        if artifact_id in getattr(self, attr):
+            return "(runtime)"
+        raise ArtifactNotFoundError(f"{kind.capitalize()} not found in any layer: {artifact_id}")
+
+
+def _artifact_attr(kind: str) -> str:
+    """Map an artifact kind to its GrimoireRepo index attribute (or raise)."""
+    try:
+        return _ARTIFACT_ATTRS[kind]
+    except KeyError:
+        raise ValueError(
+            f"Unknown artifact kind {kind!r} (expected one of {sorted(_ARTIFACT_ATTRS)})"
+        ) from None
 
 
 class LayeredGrimoire:
@@ -124,6 +228,7 @@ class LayeredGrimoire:
         roots: Sequence[tuple[str, str | Path, bool]],
         *,
         scaffold_writable: bool = True,
+        strict: bool = False,
     ) -> "LayeredGrimoire":
         """
         Build a :class:`LayeredGrimoire` from ``(name, path, writable)`` triples.
@@ -134,12 +239,16 @@ class LayeredGrimoire:
             scaffold_writable: If ``True`` (default), writable roots that do not
                 yet exist are scaffolded via :meth:`ensure_layer_root`. Read-only
                 roots must already exist.
+            strict: Load every layer repo in strict mode — any artifact parse
+                failure or duplicate id raises :class:`RepoError` (the
+                fail-loud mode control-plane consumers use for overlays).
 
         Returns:
             A composed :class:`LayeredGrimoire`.
 
         Raises:
-            RepoError: If a non-writable root does not exist.
+            RepoError: If a non-writable root does not exist, or (with
+                ``strict=True``) a layer fails strict loading.
         """
         layers: list[GrimoireLayer] = []
         for name, path, writable in roots:
@@ -148,7 +257,10 @@ class LayeredGrimoire:
                 cls.ensure_layer_root(p, name=name)
             if not p.is_dir():
                 raise RepoError(f"Grimoire layer '{name}' root does not exist: {p}")
-            repo = GrimoireRepo.load(p, writable=writable)
+            try:
+                repo = GrimoireRepo.load(p, writable=writable, strict=strict)
+            except RepoError as e:
+                raise RepoError(f"Grimoire layer '{name}' failed to load: {e}") from e
             layers.append(GrimoireLayer(name=name, repo=repo, writable=writable))
         return cls(layers)
 
@@ -178,18 +290,36 @@ class LayeredGrimoire:
 
     # ── Resolution / reads ─────────────────────────────────────────────────────
 
-    def _merged_spells(self) -> dict[str, Spell]:
+    def _merged(self, kind: str) -> dict[str, object]:
         """
-        Merge spells across layers by id, with higher precedence overriding.
+        Merge one artifact kind across layers by id (higher precedence wins).
+
+        Args:
+            kind: One of ``spell|rune|promptlet|ritual|bundle|skilldoc``.
 
         Returns:
-            Mapping ``{id: Spell}`` reflecting the resolved view.
+            Mapping ``{id: artifact}`` reflecting the resolved view.
         """
-        merged: dict[str, Spell] = {}
+        attr = _artifact_attr(kind)
+        merged: dict[str, object] = {}
         for layer in self._layers:  # low → high; later overrides
-            for spell in layer.repo._spells.values():
-                merged[spell.id] = spell
+            merged.update(getattr(layer.repo, attr))
         return merged
+
+    def _merged_spells(self) -> dict[str, Spell]:
+        """Merge spells across layers by id (kept for back-compat)."""
+        return self._merged("spell")  # type: ignore[return-value]
+
+    def _get(self, kind: str, artifact_id: str) -> object:
+        """Resolve one artifact by kind+id (highest-precedence layer wins)."""
+        attr = _artifact_attr(kind)
+        for layer in reversed(self._layers):  # high → low
+            artifact = getattr(layer.repo, attr).get(artifact_id)
+            if artifact is not None:
+                return artifact
+        raise ArtifactNotFoundError(
+            f"{kind.capitalize()} not found in any layer: {artifact_id}"
+        )
 
     def get_spell(self, spell_id: str) -> Spell:
         """
@@ -198,23 +328,111 @@ class LayeredGrimoire:
         Raises:
             ArtifactNotFoundError: If no layer defines the id.
         """
-        for layer in reversed(self._layers):  # high → low
-            spell = layer.repo._spells.get(spell_id)
-            if spell is not None:
-                return spell
-        raise ArtifactNotFoundError(f"Spell not found in any layer: {spell_id}")
+        return self._get("spell", spell_id)  # type: ignore[return-value]
 
-    def resolve_layer(self, spell_id: str) -> str:
+    def get_rune(self, rune_id: str) -> RuneSpec:
+        """Resolve a rune by id (highest-precedence layer wins)."""
+        return self._get("rune", rune_id)  # type: ignore[return-value]
+
+    def get_promptlet(self, promptlet_id: str) -> Promptlet:
+        """Resolve a promptlet by id (highest-precedence layer wins)."""
+        return self._get("promptlet", promptlet_id)  # type: ignore[return-value]
+
+    def get_ritual(self, ritual_id: str) -> Ritual:
+        """Resolve a ritual by id (highest-precedence layer wins)."""
+        return self._get("ritual", ritual_id)  # type: ignore[return-value]
+
+    def get_bundle(self, bundle_id: str) -> Bundle:
+        """Resolve a bundle by id (highest-precedence layer wins)."""
+        return self._get("bundle", bundle_id)  # type: ignore[return-value]
+
+    def get_skilldoc(self, skilldoc_id: str) -> SkillDoc:
+        """Resolve a skilldoc by id (highest-precedence layer wins)."""
+        return self._get("skilldoc", skilldoc_id)  # type: ignore[return-value]
+
+    def list_runes(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[RuneSpec]:
+        """List resolved runes, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
+        runes = list(self._merged("rune").values())
+        if tags:
+            wanted = set(tags)
+            runes = [r for r in runes if _tag_match(set(r.tags), wanted, match)]  # type: ignore[attr-defined]
+        return sorted(runes, key=lambda r: r.id)  # type: ignore[attr-defined,return-value]
+
+    def list_promptlets(self) -> list[Promptlet]:
+        """List resolved promptlets."""
+        return sorted(self._merged("promptlet").values(), key=lambda p: p.id)  # type: ignore[attr-defined,return-value]
+
+    def list_rituals(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Ritual]:
+        """List resolved rituals, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
+        rituals = list(self._merged("ritual").values())
+        if tags:
+            wanted = set(tags)
+            rituals = [r for r in rituals if _tag_match(set(r.tags), wanted, match)]  # type: ignore[attr-defined]
+        return sorted(rituals, key=lambda r: r.id)  # type: ignore[attr-defined,return-value]
+
+    def list_bundles(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[Bundle]:
+        """List resolved bundles, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
+        bundles = list(self._merged("bundle").values())
+        if tags:
+            wanted = set(tags)
+            bundles = [b for b in bundles if _tag_match(set(b.tags), wanted, match)]  # type: ignore[attr-defined]
+        return sorted(bundles, key=lambda b: b.id)  # type: ignore[attr-defined,return-value]
+
+    def list_skilldocs(
+        self, tags: list[str] | None = None, *, match: str = "all"
+    ) -> list[SkillDoc]:
+        """List resolved skilldocs, optionally filtered by tags (``match`` = all|any)."""
+        _validate_match(match)
+        docs = list(self._merged("skilldoc").values())
+        if tags:
+            wanted = set(tags)
+            docs = [d for d in docs if _tag_match(set(d.tags), wanted, match)]  # type: ignore[attr-defined]
+        return sorted(docs, key=lambda d: d.id)  # type: ignore[attr-defined,return-value]
+
+    @property
+    def default_vars(self) -> dict[str, object]:
+        """Per-key merged default variables (higher layer key wins)."""
+        merged: dict[str, object] = {}
+        for layer in self._layers:
+            merged.update(layer.repo._default_vars)
+        return merged
+
+    def resolve_layer(self, artifact_id: str, kind: str = "spell") -> str:
         """
-        Return the name of the layer a spell resolves from.
+        Return the name of the layer an artifact resolves from.
+
+        Args:
+            artifact_id: The artifact id to locate.
+            kind: Artifact kind (``spell`` default;
+                ``rune|promptlet|ritual|bundle|skilldoc``).
 
         Raises:
+            ValueError: On an unknown ``kind``.
             ArtifactNotFoundError: If no layer defines the id.
         """
+        attr = _artifact_attr(kind)
         for layer in reversed(self._layers):
-            if spell_id in layer.repo._spells:
+            if artifact_id in getattr(layer.repo, attr):
                 return layer.name
-        raise ArtifactNotFoundError(f"Spell not found in any layer: {spell_id}")
+        raise ArtifactNotFoundError(
+            f"{kind.capitalize()} not found in any layer: {artifact_id}"
+        )
+
+    def composite_view(self) -> CompositeRepoView:
+        """
+        Build a fresh read-only :class:`CompositeRepoView` over the current
+        layers (the object the ``Grimoire`` facade uses as its ``_repo``).
+        """
+        return CompositeRepoView(self._layers)
 
     def list_spells(
         self, tags: list[str] | None = None, *, match: str = "all"
@@ -334,10 +552,12 @@ class LayeredGrimoire:
     # ── Maintenance ──────────────────────────────────────────────────────────────
 
     def reload(self) -> None:
-        """Reload every layer's repo from disk, preserving order/writability."""
+        """Reload every layer's repo from disk, preserving order/writability/strictness."""
         rebuilt: list[GrimoireLayer] = []
         for layer in self._layers:
-            repo = GrimoireRepo.load(layer.repo.root, writable=layer.writable)
+            repo = GrimoireRepo.load(
+                layer.repo.root, writable=layer.writable, strict=layer.repo.strict
+            )
             rebuilt.append(GrimoireLayer(name=layer.name, repo=repo, writable=layer.writable))
         self._layers = rebuilt
         self._by_name = {layer.name: layer for layer in rebuilt}

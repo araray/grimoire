@@ -61,6 +61,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -137,12 +138,74 @@ class Grimoire:
         procedural_indexer: Any | None = None,
     ) -> None:
         path = Path(repo_path) if repo_path is not None else Path.cwd()
+        self._layered: Any | None = None  # LayeredGrimoire when built via .layered()
         self._repo = GrimoireRepo.load(path)
         self._strict = strict
         self._procedural_retriever = procedural_retriever
         self._procedural_indexer = procedural_indexer
         self._engine = self._build_engine()
         self._assembler = BundleAssembler(self._repo)
+        self._cache_generation = 0
+        self._catalog_cache: tuple[int, dict[str, Any]] | None = None
+        self._tool_schemas_cache: tuple[int, list[dict[str, Any]]] | None = None
+
+    @classmethod
+    def layered(
+        cls,
+        roots: Sequence[tuple[str, str | Path, bool]],
+        *,
+        strict: bool = True,
+        load_strict: bool = True,
+        scaffold_writable: bool = True,
+        procedural_retriever: Any | None = None,
+        procedural_indexer: Any | None = None,
+    ) -> "Grimoire":
+        """
+        Build a Grimoire facade over ORDERED overlay layers (0.4.0).
+
+        The composed view resolves every artifact type (spells, runes,
+        promptlets, rituals, bundles, skilldocs, default vars) with
+        deterministic precedence: **lowest → highest**, highest wins. This is
+        the control-plane composition used by llmcore/wairu::
+
+            g = Grimoire.layered([
+                ("llmcore-builtin", llmcore_pack_path, False),
+                ("wairu-core", wairu_pack_path, False),
+                ("user", "~/.config/wairu/grimoire", True),
+            ])
+
+        Args:
+            roots: Ordered ``(name, path, writable)`` triples, lowest →
+                highest precedence.
+            strict: Conjure strictness (missing required variables raise) —
+                same meaning as the single-root constructor's ``strict``.
+            load_strict: Load layers in strict repo mode — parse failures and
+                duplicate ids inside a layer raise instead of log-and-skip
+                (fail-loud; the default for control-plane use).
+            scaffold_writable: Scaffold missing writable layer roots.
+            procedural_retriever / procedural_indexer: As in ``__init__``.
+
+        Returns:
+            A layered ``Grimoire`` facade. Write APIs target the highest
+            writable layer via the underlying :class:`LayeredGrimoire`.
+        """
+        from grimoire.layered import LayeredGrimoire
+
+        layered = LayeredGrimoire.from_roots(
+            roots, scaffold_writable=scaffold_writable, strict=load_strict
+        )
+        self = cls.__new__(cls)
+        self._layered = layered
+        self._repo = layered.composite_view()
+        self._strict = strict
+        self._procedural_retriever = procedural_retriever
+        self._procedural_indexer = procedural_indexer
+        self._engine = self._build_engine()
+        self._assembler = BundleAssembler(self._repo)
+        self._cache_generation = 0
+        self._catalog_cache = None
+        self._tool_schemas_cache = None
+        return self
 
     # ── Internal wiring ─────────────────────────────────────────────────────
 
@@ -157,15 +220,34 @@ class Grimoire:
 
     def reload(self) -> None:
         """
-        Re-load the grimoire repo from disk.
+        Re-load the grimoire repo (or every layer) from disk.
 
         Call this after modifying files on disk to pick up changes.
-        All internal caches (engine, assembler) are rebuilt.
+        All internal caches (engine, assembler, catalog/tool-schema caches)
+        are rebuilt. NOTE (layered mode): artifacts registered at runtime
+        directly on the composed view (e.g. runtime runes) are dropped —
+        callers own replaying them.
         """
-        self._repo = GrimoireRepo.load(self._repo.root)
+        if self._layered is not None:
+            self._layered.reload()
+            self._repo = self._layered.composite_view()
+        else:
+            self._repo = GrimoireRepo.load(
+                self._repo.root, writable=self._repo.writable, strict=self._repo.strict
+            )
         self._engine = self._build_engine()
         self._assembler = BundleAssembler(self._repo)
+        self.invalidate_caches()
         logger.info("Grimoire reloaded from %s", self._repo.root)
+
+    def invalidate_caches(self) -> None:
+        """Invalidate memoized catalog/tool-schema results (0.4.0).
+
+        Called automatically by :meth:`reload`; call manually after mutating
+        the repo in-memory (e.g. registering runtime runes) so cached
+        catalog/tool listings never serve stale entries.
+        """
+        self._cache_generation += 1
 
     # ── Properties ──────────────────────────────────────────────────────────
 
@@ -183,6 +265,30 @@ class Grimoire:
     def version(self) -> str:
         """Grimoire manifest version."""
         return self._repo.manifest.version
+
+    @property
+    def layers(self) -> list[str] | None:
+        """Layer names in ascending precedence, or ``None`` for single-root."""
+        if self._layered is None:
+            return None
+        return [layer.name for layer in self._layered.layers]
+
+    def resolve_layer(self, artifact_id: str, kind: str = "spell") -> str:
+        """
+        Name of the layer an artifact resolves from (layered mode).
+
+        Args:
+            artifact_id: The artifact id to locate.
+            kind: ``spell`` (default) | ``rune`` | ``promptlet`` | ``ritual``
+                | ``bundle`` | ``skilldoc``.
+
+        Raises:
+            RuntimeError: If this facade is not layered.
+            ArtifactNotFoundError: If no layer defines the id.
+        """
+        if self._layered is None:
+            raise RuntimeError("resolve_layer() requires a layered Grimoire (.layered(...))")
+        return self._layered.resolve_layer(artifact_id, kind)
 
     # ── Conjure (polymorphic) ───────────────────────────────────────────────
 
@@ -463,6 +569,15 @@ class Grimoire:
         if schema_format != "openai":
             raise ValueError(f"Unsupported tool schema format: {schema_format!r} (use 'openai')")
 
+        # Fast path (0.4.0): memoize the unfiltered listing — the hot call for
+        # tool inventories — keyed by the cache generation (reload/invalidate
+        # bumps it). Filtered calls stay uncached (cheap + rarely hot).
+        unfiltered = rune_ids is None and not tags
+        if unfiltered and self._tool_schemas_cache is not None:
+            gen, cached = self._tool_schemas_cache
+            if gen == self._cache_generation:
+                return cached
+
         # Select runes
         if rune_ids is not None:
             runes = []
@@ -474,7 +589,10 @@ class Grimoire:
         else:
             runes = self._repo.list_runes(tags=tags)
 
-        return _runes_to_openai_tools(runes)
+        result = _runes_to_openai_tools(runes)
+        if unfiltered:
+            self._tool_schemas_cache = (self._cache_generation, result)
+        return result
 
     def to_mcp_tool_manifest(
         self,
@@ -573,15 +691,29 @@ class Grimoire:
 
     # ── Validation & lint ───────────────────────────────────────────────────
 
-    def validate(self) -> ValidationResult:
+    def validate(self, *, layer: str | None = None) -> ValidationResult:
         """
         Run full structural validation on the grimoire repository.
 
         Checks all spells, runes, bundles, skilldocs, and cross-references.
 
+        Args:
+            layer: (Layered mode only) validate a SINGLE layer's repo in
+                isolation — required for fail-loud startup checks, where a
+                user overlay that merely shadows artifacts must still be
+                validated on its own.
+
         Returns:
             ValidationResult with diagnostics.
+
+        Raises:
+            RuntimeError: If ``layer`` is given on a non-layered facade.
+            ValueError: If ``layer`` names an unknown layer.
         """
+        if layer is not None:
+            if self._layered is None:
+                raise RuntimeError("validate(layer=...) requires a layered Grimoire")
+            return validate_repo(self._layered._layer(layer).repo)
         return validate_repo(self._repo)
 
     def lint(
@@ -619,13 +751,20 @@ class Grimoire:
         Return a JSON-serializable catalog of all artifacts.
 
         Suitable for agent introspection and LLM tool discovery.
-        Delegates to ``GrimoireRepo.catalog()``.
+        Delegates to ``GrimoireRepo.catalog()``; memoized per cache
+        generation (see :meth:`invalidate_caches`).
 
         Returns:
             Dict with grimoire metadata, spells, runes, rituals, bundles,
             skilldocs, and promptlet listings.
         """
-        return self._repo.catalog()
+        if self._catalog_cache is not None:
+            gen, cached = self._catalog_cache
+            if gen == self._cache_generation:
+                return cached
+        result = self._repo.catalog()
+        self._catalog_cache = (self._cache_generation, result)
+        return result
 
     # ── Convenience accessors ───────────────────────────────────────────────
 

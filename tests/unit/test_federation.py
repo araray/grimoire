@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import pytest
+
+# grimoire.federation imports llmcore at module level; llmcore is an optional
+# ecosystem dependency (not declared by grimoire), so skip when unavailable.
+pytest.importorskip("llmcore.observability.federation")
+
 from grimoire.federation import (
     federate_mcp_request,
     federate_mcp_response,
@@ -7,7 +13,11 @@ from grimoire.federation import (
     federate_rune_command,
     federate_rune_commands,
 )
-from grimoire.mcp_server.models import JSONRPCError, JSONRPCRequest, JSONRPCResponse
+from grimoire.mcp_server.models import (
+    JSONRPCError,
+    JSONRPCRequest,
+    JSONRPCResponse,
+)
 from grimoire.models import CommandSpec, Permission, RiskLevel, RuneSpec
 
 

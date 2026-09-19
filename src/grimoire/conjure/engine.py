@@ -92,6 +92,74 @@ class ConjureEngine:
     ) -> None:
         self._promptlets: dict[str, Promptlet] = promptlets or {}
         self._runes: dict[str, RuneSpec] = runes or {}
+        # 0.4.0: static host/git builtins are computed ONCE per engine (they
+        # previously ran two `git` subprocesses + os/socket lookups on EVERY
+        # conjure — a hot-path cost for prompt-serving control planes). Call
+        # refresh_builtins() to recompute (Grimoire.reload() does).
+        self._static_builtins: dict[str, Any] = self._compute_static_builtins()
+
+    def refresh_builtins(self) -> None:
+        """Recompute the cached host/git builtin variables."""
+        self._static_builtins = self._compute_static_builtins()
+
+    @staticmethod
+    def _compute_static_builtins() -> dict[str, Any]:
+        """Compute the per-process-stable builtin variables (host + git)."""
+        static: dict[str, Any] = {}
+
+        # W2: host built-ins — graceful fallback on any error
+        import os
+        import socket
+
+        try:
+            static["grimoire.host.username"] = os.getlogin()
+        except Exception:
+            try:
+                static["grimoire.host.username"] = os.environ.get(
+                    "USER", os.environ.get("USERNAME", "unknown")
+                )
+            except Exception:
+                static["grimoire.host.username"] = "unknown"
+        try:
+            static["grimoire.host.hostname"] = socket.gethostname()
+        except Exception:
+            static["grimoire.host.hostname"] = "unknown"
+        try:
+            static["grimoire.host.cwd"] = os.getcwd()
+        except Exception:
+            static["grimoire.host.cwd"] = "unknown"
+
+        # W2: git built-ins — requires git in PATH; graceful fallback
+        import subprocess
+
+        try:
+            repo_name = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--show-toplevel"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
+                .decode()
+                .strip()
+            )
+            static["grimoire.git.repo_name"] = os.path.basename(repo_name)
+        except Exception:
+            static["grimoire.git.repo_name"] = "unknown"
+        try:
+            ref = (
+                subprocess.check_output(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                )
+                .decode()
+                .strip()
+            )
+            static["grimoire.git.ref"] = ref
+        except Exception:
+            static["grimoire.git.ref"] = "unknown"
+
+        return static
 
     # ── Public API ──────────────────────────────────────────────────────────
 
@@ -173,7 +241,12 @@ class ConjureEngine:
         """
         effective: dict[str, Any] = {}
 
-        # Layer 1: Built-ins
+        # Layer 1: Built-ins.
+        # Static host/git builtins come from the per-engine cache (0.4.0 —
+        # see _compute_static_builtins); time/spell/run builtins stay
+        # per-call by design.
+        effective.update(self._static_builtins)
+
         now = datetime.now(timezone.utc)
         effective["grimoire.now.iso"] = now.isoformat()
         effective["grimoire.now.date"] = now.strftime("%Y-%m-%d")
@@ -181,58 +254,6 @@ class ConjureEngine:
         effective["grimoire.spell.id"] = spell.id
         effective["grimoire.spell.name"] = spell.name
         effective["grimoire.spell.version"] = spell.version
-
-        # W2: host built-ins — graceful fallback on any error
-        import os
-        import socket
-
-        try:
-            effective["grimoire.host.username"] = os.getlogin()
-        except Exception:
-            try:
-                effective["grimoire.host.username"] = os.environ.get(
-                    "USER", os.environ.get("USERNAME", "unknown")
-                )
-            except Exception:
-                effective["grimoire.host.username"] = "unknown"
-        try:
-            effective["grimoire.host.hostname"] = socket.gethostname()
-        except Exception:
-            effective["grimoire.host.hostname"] = "unknown"
-        try:
-            effective["grimoire.host.cwd"] = os.getcwd()
-        except Exception:
-            effective["grimoire.host.cwd"] = "unknown"
-
-        # W2: git built-ins — requires git in PATH; graceful fallback
-        import subprocess
-
-        try:
-            repo_name = (
-                subprocess.check_output(
-                    ["git", "rev-parse", "--show-toplevel"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=2,
-                )
-                .decode()
-                .strip()
-            )
-            effective["grimoire.git.repo_name"] = os.path.basename(repo_name)
-        except Exception:
-            effective["grimoire.git.repo_name"] = "unknown"
-        try:
-            ref = (
-                subprocess.check_output(
-                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                    stderr=subprocess.DEVNULL,
-                    timeout=2,
-                )
-                .decode()
-                .strip()
-            )
-            effective["grimoire.git.ref"] = ref
-        except Exception:
-            effective["grimoire.git.ref"] = "unknown"
 
         # W2: run built-ins — unique identifiers for this invocation
         import uuid

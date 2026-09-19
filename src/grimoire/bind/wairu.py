@@ -276,6 +276,13 @@ def register_wairu_plugin_tools(
         for rune in runes:
             engine_runes[rune.id] = rune
 
+    # 0.4.0: a Grimoire facade memoizes catalog/tool_schemas — invalidate so
+    # freshly registered runtime runes are immediately visible (guarded:
+    # bare GrimoireRepo targets have no caches).
+    invalidate = getattr(target, "invalidate_caches", None)
+    if callable(invalidate):
+        invalidate()
+
     return runes
 
 
